@@ -2,6 +2,7 @@
 #include <aaudio/AAudio.h>
 #include <android/log.h>
 #include <cstdint>
+#include <cstring>
 #include <atomic>
 #include <vector>
 
@@ -36,9 +37,16 @@ struct AdpcmState {
     int Index = 0;
 };
 
+struct RiceState {
+    uint32_t RunningSum = 32;
+};
+
 static AdpcmState LeftDecoderState;
 static AdpcmState RightDecoderState;
+static RiceState LeftRiceDecoder;
+static RiceState RightRiceDecoder;
 static std::vector<int16_t> DecodeBuffer;
+static std::vector<uint8_t> PendingBytes;
 
 static inline int16_t AdpcmDecodeSample(AdpcmState& State, uint8_t Code) {
     int Step = StepSizeTable[State.Index];
@@ -60,6 +68,103 @@ static inline int16_t AdpcmDecodeSample(AdpcmState& State, uint8_t Code) {
     return static_cast<int16_t>(State.Predictor);
 }
 
+static inline int RiceParam(const RiceState& State) {
+    uint32_t Mean = State.RunningSum >> 5;
+    int K = 0;
+    while (K < 3 && (1u << (K + 1)) <= Mean + 1) ++K;
+    return K;
+}
+
+static inline void RiceUpdate(RiceState& State, uint32_t Value) {
+    State.RunningSum += (Value << 1) - (State.RunningSum >> 5);
+}
+
+class BitReader {
+public:
+    BitReader(const uint8_t* InData, size_t InLength) : Data(InData), Length(InLength) {}
+
+    uint32_t ReadBit() {
+        if (BytePos >= Length) return 0;
+        uint32_t Bit = (Data[BytePos] >> (7 - BitPos)) & 1u;
+        if (++BitPos == 8) { BitPos = 0; ++BytePos; }
+        return Bit;
+    }
+
+    uint32_t ReadBits(int Count) {
+        uint32_t Value = 0;
+        for (int I = 0; I < Count; ++I) Value = (Value << 1) | ReadBit();
+        return Value;
+    }
+
+private:
+    const uint8_t* Data;
+    size_t Length;
+    size_t BytePos = 0;
+    int BitPos = 0;
+};
+
+static inline uint32_t RiceDecode(BitReader& Reader, int K) {
+    if (K >= 3) {
+        return Reader.ReadBits(3);
+    }
+    uint32_t Quotient = 0;
+    while (Reader.ReadBit()) ++Quotient;
+    uint32_t Remainder = (K > 0) ? Reader.ReadBits(K) : 0;
+    return (Quotient << K) | Remainder;
+}
+
+static void DecodeRiceFrame(const uint8_t* FrameData, uint16_t PayloadLength, uint16_t SampleCount) {
+    BitReader Reader(FrameData, PayloadLength);
+
+    DecodeBuffer.clear();
+    size_t NeededCapacity = static_cast<size_t>(SampleCount) * static_cast<size_t>(ActiveChannels > 1 ? 2 : 1);
+    if (DecodeBuffer.capacity() < NeededCapacity) {
+        DecodeBuffer.reserve(NeededCapacity);
+    }
+
+    for (uint16_t I = 0; I < SampleCount; ++I) {
+        uint32_t LeftSign = Reader.ReadBit();
+        int LeftK = RiceParam(LeftRiceDecoder);
+        uint32_t LeftMagnitude = RiceDecode(Reader, LeftK);
+        RiceUpdate(LeftRiceDecoder, LeftMagnitude);
+        uint8_t LeftCode = static_cast<uint8_t>((LeftSign << 3) | (LeftMagnitude & 0x7u));
+        DecodeBuffer.push_back(AdpcmDecodeSample(LeftDecoderState, LeftCode));
+
+        if (ActiveChannels > 1) {
+            uint32_t RightSign = Reader.ReadBit();
+            int RightK = RiceParam(RightRiceDecoder);
+            uint32_t RightMagnitude = RiceDecode(Reader, RightK);
+            RiceUpdate(RightRiceDecoder, RightMagnitude);
+            uint8_t RightCode = static_cast<uint8_t>((RightSign << 3) | (RightMagnitude & 0x7u));
+            DecodeBuffer.push_back(AdpcmDecodeSample(RightDecoderState, RightCode));
+        }
+    }
+
+    int32_t FrameCountOut = static_cast<int32_t>(DecodeBuffer.size() / ActiveChannels);
+    if (FrameCountOut > 0) {
+        AAudioStream_write(PlaybackStream, DecodeBuffer.data(), FrameCountOut, 50'000'000LL);
+    }
+}
+
+static void ProcessPendingFrames() {
+    size_t Offset = 0;
+    while (PendingBytes.size() - Offset >= 4) {
+        uint16_t SampleCount = static_cast<uint16_t>(PendingBytes[Offset]) |
+            (static_cast<uint16_t>(PendingBytes[Offset + 1]) << 8);
+        uint16_t PayloadLength = static_cast<uint16_t>(PendingBytes[Offset + 2]) |
+            (static_cast<uint16_t>(PendingBytes[Offset + 3]) << 8);
+
+        if (PendingBytes.size() - Offset < static_cast<size_t>(4 + PayloadLength)) break;
+
+        DecodeRiceFrame(PendingBytes.data() + Offset + 4, PayloadLength, SampleCount);
+        Offset += 4 + PayloadLength;
+    }
+
+    if (Offset > 0) {
+        PendingBytes.erase(PendingBytes.begin(), PendingBytes.begin() + static_cast<long>(Offset));
+    }
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Clazz,
     jint SampleRate, jint Channels, jint BitsPerSample, jint Codec) {
@@ -70,14 +175,18 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
-    aaudio_format_t Format = (Codec == 1 || BitsPerSample == 16) ? AAUDIO_FORMAT_PCM_I16 : AAUDIO_FORMAT_PCM_FLOAT;
+    aaudio_format_t Format = (Codec == 1 || Codec == 2 || BitsPerSample == 16) ? AAUDIO_FORMAT_PCM_I16 : AAUDIO_FORMAT_PCM_FLOAT;
     BytesPerFrame = ((BitsPerSample == 16) ? 2 : 4) * Channels;
     ActiveChannels = Channels;
     ActiveCodec = Codec;
 
     LeftDecoderState = AdpcmState{};
     RightDecoderState = AdpcmState{};
+    LeftRiceDecoder = RiceState{};
+    RightRiceDecoder = RiceState{};
     DecodeBuffer.reserve(16384);
+    PendingBytes.clear();
+    PendingBytes.reserve(16384);
 
     AAudioStreamBuilder_setDirection(Builder, AAUDIO_DIRECTION_OUTPUT);
     AAudioStreamBuilder_setSharingMode(Builder, AAUDIO_SHARING_MODE_SHARED);
@@ -120,10 +229,17 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeWrite(JNIEnv* Env, jclass Cl
     jbyte* Bytes = static_cast<jbyte*>(Env->GetPrimitiveArrayCritical(Data, nullptr));
     if (Bytes == nullptr) return;
 
-    if (ActiveCodec == 1) {
+    if (ActiveCodec == 2) {
+        size_t OldSize = PendingBytes.size();
+        PendingBytes.resize(OldSize + static_cast<size_t>(Length));
+        std::memcpy(PendingBytes.data() + OldSize, Bytes, static_cast<size_t>(Length));
+        Env->ReleasePrimitiveArrayCritical(Data, Bytes, JNI_ABORT);
+        ProcessPendingFrames();
+    } else if (ActiveCodec == 1) {
         DecodeBuffer.clear();
-        if (DecodeBuffer.capacity() < static_cast<size_t>(Length) * 2) {
-            DecodeBuffer.reserve(static_cast<size_t>(Length) * 2);
+        size_t NeededCapacity = static_cast<size_t>(Length) * 2;
+        if (DecodeBuffer.capacity() < NeededCapacity) {
+            DecodeBuffer.reserve(NeededCapacity);
         }
 
         for (jint I = 0; I < Length; ++I) {
@@ -160,4 +276,5 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeShutdown(JNIEnv* Env, jclass
         AAudioStream_close(PlaybackStream);
         PlaybackStream = nullptr;
     }
+    PendingBytes.clear();
 }

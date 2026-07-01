@@ -2,6 +2,7 @@
 #include "AudioCapture.h"
 #include <windows.h>
 #include <cstdlib>
+#include <cstring>
 #include <atomic>
 #include <vector>
 
@@ -16,6 +17,8 @@ struct StreamHeader {
 #pragma pack(pop)
 
 static constexpr uint32_t StreamMagic = 0x42415354;
+static constexpr uint8_t CodecRiceAdpcm = 2;
+static constexpr uint32_t MaxChunkFrames = 65535;
 
 static std::atomic<bool> HeaderSent{ false };
 static std::atomic<bool> ClientAlive{ false };
@@ -24,6 +27,10 @@ static BluetoothServer* GlobalServer = nullptr;
 struct AdpcmState {
     int Predictor = 0;
     int Index = 0;
+};
+
+struct RiceState {
+    uint32_t RunningSum = 32;
 };
 
 static const int IndexTable[16] = {
@@ -45,11 +52,16 @@ static const int StepSizeTable[89] = {
 
 static AdpcmState LeftState;
 static AdpcmState RightState;
-static std::vector<uint8_t> ConversionBuffer;
+static RiceState LeftRice;
+static RiceState RightRice;
+static std::vector<uint8_t> BitBuffer;
+static std::vector<uint8_t> FrameBuffer;
 
-static inline void ResetAdpcmState() {
+static inline void ResetCodecState() {
     LeftState = AdpcmState{};
     RightState = AdpcmState{};
+    LeftRice = RiceState{};
+    RightRice = RiceState{};
 }
 
 static inline uint8_t AdpcmEncodeSample(AdpcmState& State, int16_t Sample) {
@@ -89,44 +101,126 @@ static inline int16_t FloatToInt16(float Value) {
     return static_cast<int16_t>(Value * 32767.0f);
 }
 
+class BitWriter {
+public:
+    explicit BitWriter(std::vector<uint8_t>& Out) : Output(Out) {}
+
+    void WriteBit(uint32_t Bit) {
+        Accumulator = (Accumulator << 1) | (Bit & 1u);
+        if (++BitCount == 8) {
+            Output.push_back(static_cast<uint8_t>(Accumulator));
+            Accumulator = 0;
+            BitCount = 0;
+        }
+    }
+
+    void WriteBits(uint32_t Value, int Count) {
+        for (int I = Count - 1; I >= 0; --I) {
+            WriteBit((Value >> I) & 1u);
+        }
+    }
+
+    void Flush() {
+        while (BitCount != 0) WriteBit(0);
+    }
+
+private:
+    std::vector<uint8_t>& Output;
+    uint32_t Accumulator = 0;
+    int BitCount = 0;
+};
+
+static inline int RiceParam(const RiceState& State) {
+    uint32_t Mean = State.RunningSum >> 5;
+    int K = 0;
+    while (K < 3 && (1u << (K + 1)) <= Mean + 1) ++K;
+    return K;
+}
+
+static inline void RiceUpdate(RiceState& State, uint32_t Value) {
+    State.RunningSum += (Value << 1) - (State.RunningSum >> 5);
+}
+
+static inline void RiceEncode(BitWriter& Writer, uint32_t Value, int K) {
+    if (K >= 3) {
+        Writer.WriteBits(Value & 0x7u, 3);
+        return;
+    }
+    uint32_t Quotient = Value >> K;
+    while (Quotient--) Writer.WriteBit(1);
+    Writer.WriteBit(0);
+    if (K > 0) Writer.WriteBits(Value & ((1u << K) - 1), K);
+}
+
+static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Channels, uint32_t SampleRate) {
+    BitBuffer.clear();
+    {
+        BitWriter Writer(BitBuffer);
+        for (uint32_t I = 0; I < ChunkFrames; ++I) {
+            float Left = Samples[I * Channels + 0];
+            float Right = (Channels > 1) ? Samples[I * Channels + 1] : Left;
+
+            uint8_t LeftCode = AdpcmEncodeSample(LeftState, FloatToInt16(Left));
+            uint32_t LeftMagnitude = LeftCode & 0x7u;
+            int LeftK = RiceParam(LeftRice);
+            Writer.WriteBit((LeftCode >> 3) & 1u);
+            RiceEncode(Writer, LeftMagnitude, LeftK);
+            RiceUpdate(LeftRice, LeftMagnitude);
+
+            uint8_t RightCode = AdpcmEncodeSample(RightState, FloatToInt16(Right));
+            uint32_t RightMagnitude = RightCode & 0x7u;
+            int RightK = RiceParam(RightRice);
+            Writer.WriteBit((RightCode >> 3) & 1u);
+            RiceEncode(Writer, RightMagnitude, RightK);
+            RiceUpdate(RightRice, RightMagnitude);
+        }
+        Writer.Flush();
+    }
+
+    if (BitBuffer.empty()) return true;
+
+    uint16_t SampleCount = static_cast<uint16_t>(ChunkFrames);
+    uint16_t PayloadLength = static_cast<uint16_t>(BitBuffer.size());
+
+    FrameBuffer.clear();
+    FrameBuffer.reserve(4 + BitBuffer.size());
+    FrameBuffer.push_back(static_cast<uint8_t>(SampleCount & 0xFF));
+    FrameBuffer.push_back(static_cast<uint8_t>((SampleCount >> 8) & 0xFF));
+    FrameBuffer.push_back(static_cast<uint8_t>(PayloadLength & 0xFF));
+    FrameBuffer.push_back(static_cast<uint8_t>((PayloadLength >> 8) & 0xFF));
+    FrameBuffer.insert(FrameBuffer.end(), BitBuffer.begin(), BitBuffer.end());
+
+    if (!HeaderSent.load(std::memory_order_relaxed)) {
+        StreamHeader Header{ StreamMagic, SampleRate, 2, 16, CodecRiceAdpcm };
+        if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
+            return false;
+        }
+        HeaderSent.store(true, std::memory_order_relaxed);
+    }
+
+    return GlobalServer->Send(FrameBuffer.data(), static_cast<uint32_t>(FrameBuffer.size()));
+}
+
 static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate, uint16_t Channels, uint16_t BitsPerSample) {
     if (!GlobalServer || !ClientAlive.load(std::memory_order_relaxed)) return;
     if (BitsPerSample != 32 || Channels == 0) return;
 
     const float* Samples = reinterpret_cast<const float*>(Data);
     uint32_t FrameCount = Size / (Channels * sizeof(float));
+    if (FrameCount == 0) return;
 
-    ConversionBuffer.clear();
-    if (ConversionBuffer.capacity() < FrameCount) {
-        ConversionBuffer.reserve(FrameCount);
-    }
+    uint32_t Offset = 0;
+    while (Offset < FrameCount) {
+        uint32_t ChunkFrames = FrameCount - Offset;
+        if (ChunkFrames > MaxChunkFrames) ChunkFrames = MaxChunkFrames;
 
-    for (uint32_t I = 0; I < FrameCount; ++I) {
-        float Left = Samples[I * Channels + 0];
-        float Right = (Channels > 1) ? Samples[I * Channels + 1] : Left;
-
-        uint8_t LeftCode = AdpcmEncodeSample(LeftState, FloatToInt16(Left));
-        uint8_t RightCode = AdpcmEncodeSample(RightState, FloatToInt16(Right));
-
-        ConversionBuffer.push_back(static_cast<uint8_t>((LeftCode << 4) | RightCode));
-    }
-
-    if (ConversionBuffer.empty()) return;
-
-    uint32_t OutSize = static_cast<uint32_t>(ConversionBuffer.size());
-
-    if (!HeaderSent.load(std::memory_order_relaxed)) {
-        StreamHeader Header{ StreamMagic, SampleRate, 2, 16, 1 };
-        if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
+        if (!SendChunk(Samples + static_cast<size_t>(Offset) * Channels, ChunkFrames, Channels, SampleRate)) {
             ClientAlive.store(false, std::memory_order_relaxed);
+            HeaderSent.store(false, std::memory_order_relaxed);
             return;
         }
-        HeaderSent.store(true, std::memory_order_relaxed);
-    }
 
-    if (!GlobalServer->Send(ConversionBuffer.data(), OutSize)) {
-        ClientAlive.store(false, std::memory_order_relaxed);
-        HeaderSent.store(false, std::memory_order_relaxed);
+        Offset += ChunkFrames;
     }
 }
 
@@ -140,14 +234,15 @@ int main() {
     GlobalServer = &Server;
     if (!Server.Start()) return 1;
 
-    ConversionBuffer.reserve(4096);
+    BitBuffer.reserve(4096);
+    FrameBuffer.reserve(4096);
 
     while (true) {
         if (!Server.WaitForClient()) continue;
 
         HeaderSent.store(false, std::memory_order_relaxed);
         ClientAlive.store(true, std::memory_order_relaxed);
-        ResetAdpcmState();
+        ResetCodecState();
 
         if (!Capture.Start(OnAudioData)) {
             Server.DropClient();
