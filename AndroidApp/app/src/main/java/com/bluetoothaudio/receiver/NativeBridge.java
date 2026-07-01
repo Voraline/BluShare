@@ -6,7 +6,7 @@ public final class NativeBridge {
         System.loadLibrary("BluetoothAudioNative");
     }
 
-    public static native boolean NativeInit(int SampleRate, int Channels, int BitsPerSample);
+    public static native boolean NativeInit(int SampleRate, int Channels, int BitsPerSample, int Codec);
 
     public static native void NativeWrite(byte[] Data, int Length);
 

@@ -65,21 +65,22 @@ public final class StreamService extends Service {
             UpdateNotification("Connected");
             InputStream Input = Socket.getInputStream();
 
-            byte[] HeaderBytes = new byte[12];
-            if (!ReadFully(Input, HeaderBytes, 12)) return;
+            byte[] HeaderBytes = new byte[13];
+            if (!ReadFully(Input, HeaderBytes, 13)) return;
 
             ByteBuffer HeaderBuffer = ByteBuffer.wrap(HeaderBytes).order(ByteOrder.LITTLE_ENDIAN);
             int Magic = HeaderBuffer.getInt();
             int SampleRate = HeaderBuffer.getInt();
             short Channels = HeaderBuffer.getShort();
             short BitsPerSample = HeaderBuffer.getShort();
+            int Codec = HeaderBuffer.get() & 0xFF;
 
             if (Magic != StreamMagic) {
                 Log.e(TAG, "Invalid stream header");
                 return;
             }
 
-            if (!NativeBridge.NativeInit(SampleRate, Channels, BitsPerSample)) {
+            if (!NativeBridge.NativeInit(SampleRate, Channels, BitsPerSample, Codec)) {
                 Log.e(TAG, "Failed to initialize native audio player");
                 return;
             }
