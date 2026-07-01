@@ -185,7 +185,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
     PendingBytes.reserve(16384);
 
     AAudioStreamBuilder_setDirection(Builder, AAUDIO_DIRECTION_OUTPUT);
-    AAudioStreamBuilder_setSharingMode(Builder, AAUDIO_SHARING_MODE_SHARED);
+    AAudioStreamBuilder_setSharingMode(Builder, AAUDIO_SHARING_MODE_EXCLUSIVE);
     AAudioStreamBuilder_setSampleRate(Builder, SampleRate);
     AAudioStreamBuilder_setChannelCount(Builder, Channels);
     AAudioStreamBuilder_setFormat(Builder, Format);
