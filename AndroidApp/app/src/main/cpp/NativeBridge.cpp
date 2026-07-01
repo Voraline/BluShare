@@ -5,14 +5,14 @@
 #include <atomic>
 #include <vector>
 
-#define LogTag "BluetoothAudioNative"
+#define LogTag "BluShareNative"
 #define LogError(...) __android_log_print(ANDROID_LOG_ERROR, LogTag, __VA_ARGS__)
 
 static AAudioStream* PlaybackStream = nullptr;
 static std::atomic<bool> StreamActive{ false };
 static int BytesPerFrame = 4;
 static int ActiveChannels = 2;
-static int ActiveCodec = 0; // 0 = raw PCM16, 1 = IMA ADPCM
+static int ActiveCodec = 0;
 
 static const int IndexTable[16] = {
     -1, -1, -1, -1, 2, 4, 6, 8,
@@ -38,8 +38,9 @@ struct AdpcmState {
 
 static AdpcmState LeftDecoderState;
 static AdpcmState RightDecoderState;
+static std::vector<int16_t> DecodeBuffer;
 
-static int16_t AdpcmDecodeSample(AdpcmState& State, uint8_t Code) {
+static inline int16_t AdpcmDecodeSample(AdpcmState& State, uint8_t Code) {
     int Step = StepSizeTable[State.Index];
     int Diff = Step >> 3;
     if (Code & 4) Diff += Step;
@@ -69,7 +70,6 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
-    // ADPCM always decodes to 16-bit PCM regardless of the original bit depth.
     aaudio_format_t Format = (Codec == 1 || BitsPerSample == 16) ? AAUDIO_FORMAT_PCM_I16 : AAUDIO_FORMAT_PCM_FLOAT;
     BytesPerFrame = ((BitsPerSample == 16) ? 2 : 4) * Channels;
     ActiveChannels = Channels;
@@ -77,18 +77,13 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
 
     LeftDecoderState = AdpcmState{};
     RightDecoderState = AdpcmState{};
+    DecodeBuffer.reserve(16384);
 
     AAudioStreamBuilder_setDirection(Builder, AAUDIO_DIRECTION_OUTPUT);
     AAudioStreamBuilder_setSharingMode(Builder, AAUDIO_SHARING_MODE_SHARED);
     AAudioStreamBuilder_setSampleRate(Builder, SampleRate);
     AAudioStreamBuilder_setChannelCount(Builder, Channels);
     AAudioStreamBuilder_setFormat(Builder, Format);
-    // LOW_LATENCY uses a very small internal buffer, which is great for
-    // games/instruments but leaves no cushion for Bluetooth's natural
-    // timing jitter -- that's what causes the audible "tick" when the
-    // buffer briefly runs dry. NONE uses a larger, more forgiving buffer;
-    // a bit more latency here is a good tradeoff since this isn't a
-    // latency-sensitive use case.
     AAudioStreamBuilder_setPerformanceMode(Builder, AAUDIO_PERFORMANCE_MODE_NONE);
 
     aaudio_result_t Result = AAudioStreamBuilder_openStream(Builder, &PlaybackStream);
@@ -99,8 +94,6 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
-    // Grow the buffer to its full capacity for extra headroom against
-    // jitter from the Bluetooth link.
     int32_t Capacity = AAudioStream_getBufferCapacityInFrames(PlaybackStream);
     if (Capacity > 0) {
         AAudioStream_setBufferSizeInFrames(PlaybackStream, Capacity);
@@ -114,7 +107,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
-    StreamActive.store(true);
+    StreamActive.store(true, std::memory_order_release);
     return JNI_TRUE;
 }
 
@@ -122,20 +115,19 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_bluetoothaudio_receiver_NativeBridge_NativeWrite(JNIEnv* Env, jclass Clazz,
     jbyteArray Data, jint Length) {
 
-    if (!StreamActive.load() || PlaybackStream == nullptr || Length <= 0) return;
+    if (!StreamActive.load(std::memory_order_acquire) || PlaybackStream == nullptr || Length <= 0) return;
 
-    jbyte* Bytes = Env->GetByteArrayElements(Data, nullptr);
+    jbyte* Bytes = static_cast<jbyte*>(Env->GetPrimitiveArrayCritical(Data, nullptr));
     if (Bytes == nullptr) return;
 
     if (ActiveCodec == 1) {
-        // Each input byte is one stereo frame: high nibble = left ADPCM
-        // code, low nibble = right ADPCM code. Decode to 16-bit PCM.
-        static std::vector<int16_t> DecodeBuffer;
         DecodeBuffer.clear();
-        DecodeBuffer.reserve(static_cast<size_t>(Length) * 2);
+        if (DecodeBuffer.capacity() < static_cast<size_t>(Length) * 2) {
+            DecodeBuffer.reserve(static_cast<size_t>(Length) * 2);
+        }
 
-        for (jint i = 0; i < Length; ++i) {
-            uint8_t Byte = static_cast<uint8_t>(Bytes[i]);
+        for (jint I = 0; I < Length; ++I) {
+            uint8_t Byte = static_cast<uint8_t>(Bytes[I]);
             uint8_t LeftCode = (Byte >> 4) & 0x0F;
             uint8_t RightCode = Byte & 0x0F;
 
@@ -144,6 +136,8 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeWrite(JNIEnv* Env, jclass Cl
                 DecodeBuffer.push_back(AdpcmDecodeSample(RightDecoderState, RightCode));
             }
         }
+
+        Env->ReleasePrimitiveArrayCritical(Data, Bytes, JNI_ABORT);
 
         int32_t FrameCount = static_cast<int32_t>(DecodeBuffer.size() / ActiveChannels);
         if (FrameCount > 0) {
@@ -154,14 +148,13 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeWrite(JNIEnv* Env, jclass Cl
         if (FrameCount > 0) {
             AAudioStream_write(PlaybackStream, Bytes, FrameCount, 50'000'000LL);
         }
+        Env->ReleasePrimitiveArrayCritical(Data, Bytes, JNI_ABORT);
     }
-
-    Env->ReleaseByteArrayElements(Data, Bytes, JNI_ABORT);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_bluetoothaudio_receiver_NativeBridge_NativeShutdown(JNIEnv* Env, jclass Clazz) {
-    StreamActive.store(false);
+    StreamActive.store(false, std::memory_order_release);
     if (PlaybackStream != nullptr) {
         AAudioStream_requestStop(PlaybackStream);
         AAudioStream_close(PlaybackStream);

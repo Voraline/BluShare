@@ -3,7 +3,7 @@ package com.bluetoothaudio.receiver;
 public final class NativeBridge {
 
     static {
-        System.loadLibrary("BluetoothAudioNative");
+        System.loadLibrary("BluShareNative");
     }
 
     public static native boolean NativeInit(int SampleRate, int Channels, int BitsPerSample, int Codec);

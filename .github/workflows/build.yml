@@ -22,7 +22,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: WindowsServer
-          path: WindowsServer/Build/Release/BluetoothAudioServer.exe
+          path: WindowsServer/Build/Release/BluShareServer.exe
 
   build-android:
     runs-on: ubuntu-latest
@@ -60,11 +60,11 @@ jobs:
       - name: Create zip
         run: |
           mkdir -p Package
-          cp Artifacts/WindowsServer/BluetoothAudioServer.exe Package/
-          cp Artifacts/AndroidApp/app-release.apk Package/BluetoothAudioReceiver.apk
-          cd Package && zip -r ../BluetoothAudioStream.zip .
+          cp Artifacts/WindowsServer/BluShareServer.exe Package/
+          cp Artifacts/AndroidApp/app-release.apk Package/BluShare.apk
+          cd Package && zip -r ../BluShare.zip .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BluetoothAudioStream
-          path: BluetoothAudioStream.zip
+          name: BluShare
+          path: BluShare.zip

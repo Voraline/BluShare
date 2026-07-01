@@ -1,14 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
-project(BluetoothAudioServer CXX)
+project(BluShareServer CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 if(MSVC)
-    add_compile_options(/O2 /W3 /EHsc)
+    add_compile_options(/O2 /Oi /GL /W3 /EHsc /DNDEBUG)
+    add_link_options(/LTCG)
 endif()
-add_executable(BluetoothAudioServer
+add_executable(BluShareServer
     Src/Main.cpp
     Src/AudioCapture.cpp
     Src/BluetoothServer.cpp
 )
-target_include_directories(BluetoothAudioServer PRIVATE Src)
-target_link_libraries(BluetoothAudioServer PRIVATE Ws2_32 Bthprops Ole32 Avrt)
+target_include_directories(BluShareServer PRIVATE Src)
+target_link_libraries(BluShareServer PRIVATE Ws2_32 Bthprops Ole32 Avrt)

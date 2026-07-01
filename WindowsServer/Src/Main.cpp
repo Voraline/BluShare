@@ -1,7 +1,6 @@
 #include "BluetoothServer.h"
 #include "AudioCapture.h"
 #include <windows.h>
-#include <cstdio>
 #include <cstdlib>
 #include <atomic>
 #include <vector>
@@ -12,7 +11,7 @@ struct StreamHeader {
     uint32_t SampleRate;
     uint16_t Channels;
     uint16_t BitsPerSample;
-    uint8_t Codec; // 0 = raw PCM16, 1 = IMA ADPCM
+    uint8_t Codec;
 };
 #pragma pack(pop)
 
@@ -21,14 +20,6 @@ static constexpr uint32_t StreamMagic = 0x42415354;
 static std::atomic<bool> HeaderSent{ false };
 static std::atomic<bool> ClientAlive{ false };
 static BluetoothServer* GlobalServer = nullptr;
-
-// Classic Bluetooth RFCOMM/SPP typically only sustains ~100-250 KB/s in
-// practice. Raw 48kHz/32-bit-float stereo audio needs ~384 KB/s. Instead of
-// throwing away sample rate or channels (which would cut the top end off the
-// audible frequency range), we keep the full 48kHz stereo signal and
-// compress it with IMA ADPCM, a standard 4:1 lossy audio codec. That brings
-// bandwidth down to roughly 48 KB/s while covering the full 0-20kHz range
-// (Nyquist for 48kHz is 24kHz, above the limit of human hearing).
 
 struct AdpcmState {
     int Predictor = 0;
@@ -56,12 +47,12 @@ static AdpcmState LeftState;
 static AdpcmState RightState;
 static std::vector<uint8_t> ConversionBuffer;
 
-static void ResetAdpcmState() {
+static inline void ResetAdpcmState() {
     LeftState = AdpcmState{};
     RightState = AdpcmState{};
 }
 
-static uint8_t AdpcmEncodeSample(AdpcmState& State, int16_t Sample) {
+static inline uint8_t AdpcmEncodeSample(AdpcmState& State, int16_t Sample) {
     int Diff = Sample - State.Predictor;
     int Sign = 0;
     if (Diff < 0) { Sign = 8; Diff = -Diff; }
@@ -92,33 +83,31 @@ static uint8_t AdpcmEncodeSample(AdpcmState& State, int16_t Sample) {
     return static_cast<uint8_t>(Code);
 }
 
-static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate, uint16_t Channels, uint16_t BitsPerSample) {
-    if (!GlobalServer || !ClientAlive.load()) return;
+static inline int16_t FloatToInt16(float Value) {
+    if (Value > 1.0f) Value = 1.0f;
+    if (Value < -1.0f) Value = -1.0f;
+    return static_cast<int16_t>(Value * 32767.0f);
+}
 
-    // Assumes the WASAPI mix format is 32-bit IEEE float, which is the
-    // standard default output format on Windows.
+static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate, uint16_t Channels, uint16_t BitsPerSample) {
+    if (!GlobalServer || !ClientAlive.load(std::memory_order_relaxed)) return;
     if (BitsPerSample != 32 || Channels == 0) return;
 
     const float* Samples = reinterpret_cast<const float*>(Data);
     uint32_t FrameCount = Size / (Channels * sizeof(float));
 
     ConversionBuffer.clear();
-    ConversionBuffer.reserve(FrameCount);
+    if (ConversionBuffer.capacity() < FrameCount) {
+        ConversionBuffer.reserve(FrameCount);
+    }
 
-    auto ToInt16 = [](float V) -> int16_t {
-        if (V > 1.0f) V = 1.0f;
-        if (V < -1.0f) V = -1.0f;
-        return static_cast<int16_t>(V * 32767.0f);
-    };
+    for (uint32_t I = 0; I < FrameCount; ++I) {
+        float Left = Samples[I * Channels + 0];
+        float Right = (Channels > 1) ? Samples[I * Channels + 1] : Left;
 
-    for (uint32_t i = 0; i < FrameCount; ++i) {
-        float Left = Samples[i * Channels + 0];
-        float Right = (Channels > 1) ? Samples[i * Channels + 1] : Left;
+        uint8_t LeftCode = AdpcmEncodeSample(LeftState, FloatToInt16(Left));
+        uint8_t RightCode = AdpcmEncodeSample(RightState, FloatToInt16(Right));
 
-        uint8_t LeftCode = AdpcmEncodeSample(LeftState, ToInt16(Left));
-        uint8_t RightCode = AdpcmEncodeSample(RightState, ToInt16(Right));
-
-        // Pack one stereo frame into a single byte: high nibble = left, low nibble = right
         ConversionBuffer.push_back(static_cast<uint8_t>((LeftCode << 4) | RightCode));
     }
 
@@ -126,31 +115,18 @@ static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate,
 
     uint32_t OutSize = static_cast<uint32_t>(ConversionBuffer.size());
 
-    if (!HeaderSent.load()) {
-        printf("Sending header: SampleRate=%u Channels=2 BitsPerSample=16 Codec=IMA_ADPCM\n", SampleRate);
+    if (!HeaderSent.load(std::memory_order_relaxed)) {
         StreamHeader Header{ StreamMagic, SampleRate, 2, 16, 1 };
         if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
-            printf("Failed to send header, dropping client\n");
-            ClientAlive.store(false);
+            ClientAlive.store(false, std::memory_order_relaxed);
             return;
         }
-        HeaderSent.store(true);
+        HeaderSent.store(true, std::memory_order_relaxed);
     }
 
     if (!GlobalServer->Send(ConversionBuffer.data(), OutSize)) {
-        printf("Send failed after %u bytes, dropping client\n", OutSize);
-        ClientAlive.store(false);
-        HeaderSent.store(false);
-        return;
-    }
-
-    static uint64_t TotalBytes = 0;
-    static ULONGLONG LastLog = 0;
-    TotalBytes += OutSize;
-    ULONGLONG Now = GetTickCount64();
-    if (Now - LastLog > 2000) {
-        printf("Streamed %llu bytes so far\n", (unsigned long long)TotalBytes);
-        LastLog = Now;
+        ClientAlive.store(false, std::memory_order_relaxed);
+        HeaderSent.store(false, std::memory_order_relaxed);
     }
 }
 
@@ -158,41 +134,31 @@ int main() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     AudioCapture Capture;
-    if (!Capture.Initialize()) {
-        printf("Failed to initialize audio capture\n");
-        return 1;
-    }
+    if (!Capture.Initialize()) return 1;
 
     BluetoothServer Server;
     GlobalServer = &Server;
-    if (!Server.Start()) {
-        printf("Failed to start Bluetooth server\n");
-        return 1;
-    }
+    if (!Server.Start()) return 1;
 
-    printf("Waiting for Android client...\n");
+    ConversionBuffer.reserve(4096);
 
     while (true) {
-        if (!Server.WaitForClient()) {
-            continue;
-        }
-        printf("Client connected\n");
-        HeaderSent.store(false);
-        ClientAlive.store(true);
+        if (!Server.WaitForClient()) continue;
+
+        HeaderSent.store(false, std::memory_order_relaxed);
+        ClientAlive.store(true, std::memory_order_relaxed);
         ResetAdpcmState();
 
         if (!Capture.Start(OnAudioData)) {
-            printf("Failed to start audio capture\n");
             Server.DropClient();
             continue;
         }
 
-        while (ClientAlive.load()) {
+        while (ClientAlive.load(std::memory_order_relaxed)) {
             Sleep(200);
         }
 
         Capture.Stop();
         Server.DropClient();
-        printf("Client disconnected, waiting for reconnection...\n");
     }
 }

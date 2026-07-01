@@ -1,6 +1,5 @@
 #include "BluetoothServer.h"
 #include <bluetoothapis.h>
-#include <cstdio>
 
 static const GUID SppServiceClassGuid = { 0x00001101, 0x0000, 0x1000, { 0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB } };
 
@@ -50,7 +49,7 @@ bool BluetoothServer::RegisterService() {
     WSAQUERYSETW QuerySet{};
     QuerySet.dwSize = sizeof(WSAQUERYSETW);
     QuerySet.lpServiceClassId = const_cast<GUID*>(&ServiceGuid);
-    QuerySet.lpszServiceInstanceName = const_cast<LPWSTR>(L"BluetoothAudioServer");
+    QuerySet.lpszServiceInstanceName = const_cast<LPWSTR>(L"BluShareServer");
     QuerySet.dwNameSpace = NS_BTH;
     QuerySet.dwNumberOfCsAddrs = 1;
     QuerySet.lpcsaBuffer = &CsAddr;

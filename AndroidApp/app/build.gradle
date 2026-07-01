@@ -33,10 +33,6 @@ android {
             if (project.hasProperty("keystorePath")) {
                 signingConfig signingConfigs.release
             } else {
-                // Use the standard debug signing config directly (not copied
-                // property-by-property) so Gradle wires up the dependency on
-                // the debug-keystore-generation task and creates the keystore
-                // before validateSigningRelease runs.
                 signingConfig signingConfigs.debug
             }
             minifyEnabled true;

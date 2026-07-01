@@ -19,10 +19,10 @@ import java.util.UUID;
 
 public final class StreamService extends Service {
 
-    private static final String TAG = "StreamService";
+    private static final String Tag = "StreamService";
     private static final UUID SppUuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
     private static final int StreamMagic = 0x42415354;
-    private static final String ChannelId = "BluetoothAudioChannel";
+    private static final String ChannelId = "BluShareChannel";
 
     private Thread WorkerThread;
     private volatile boolean Running = false;
@@ -76,23 +76,23 @@ public final class StreamService extends Service {
             int Codec = HeaderBuffer.get() & 0xFF;
 
             if (Magic != StreamMagic) {
-                Log.e(TAG, "Invalid stream header");
+                Log.e(Tag, "Invalid stream header");
                 return;
             }
 
             if (!NativeBridge.NativeInit(SampleRate, Channels, BitsPerSample, Codec)) {
-                Log.e(TAG, "Failed to initialize native audio player");
+                Log.e(Tag, "Failed to initialize native audio player");
                 return;
             }
 
-            byte[] Buffer = new byte[8192];
+            byte[] Buffer = new byte[16384];
             while (Running) {
                 int Read = Input.read(Buffer);
                 if (Read <= 0) break;
                 NativeBridge.NativeWrite(Buffer, Read);
             }
         } catch (Exception Error) {
-            Log.e(TAG, "Stream error", Error);
+            Log.e(Tag, "Stream error", Error);
         } finally {
             NativeBridge.NativeShutdown();
             CloseSocket();

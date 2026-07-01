@@ -1,7 +1,6 @@
 #include "AudioCapture.h"
 #include <mmdeviceapi.h>
 #include <avrt.h>
-#include <cstdio>
 
 static const IID IID_IAudioClient_Local = __uuidof(IAudioClient);
 static const IID IID_IAudioCaptureClient_Local = __uuidof(IAudioCaptureClient);
@@ -15,6 +14,7 @@ AudioCapture::~AudioCapture() {
     if (Client) Client->Release();
     if (Device) Device->Release();
     if (DeviceEnumerator) DeviceEnumerator->Release();
+    if (CaptureEvent) CloseHandle(CaptureEvent);
 }
 
 bool AudioCapture::Initialize() {
@@ -33,8 +33,14 @@ bool AudioCapture::Initialize() {
 
     REFERENCE_TIME BufferDuration = 20000000;
     Result = Client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-        AUDCLNT_STREAMFLAGS_LOOPBACK,
+        AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
         BufferDuration, 0, Format, nullptr);
+    if (FAILED(Result)) return false;
+
+    CaptureEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (CaptureEvent == nullptr) return false;
+
+    Result = Client->SetEventHandle(CaptureEvent);
     if (FAILED(Result)) return false;
 
     Result = Client->GetService(IID_IAudioCaptureClient_Local, reinterpret_cast<void**>(&CaptureClient));
@@ -54,6 +60,7 @@ bool AudioCapture::Start(DataCallback Callback) {
 void AudioCapture::Stop() {
     if (!Running) return;
     Running = false;
+    if (CaptureEvent) SetEvent(CaptureEvent);
     if (CaptureThread) {
         WaitForSingleObject(CaptureThread, 2000);
         CloseHandle(CaptureThread);
@@ -72,7 +79,9 @@ void AudioCapture::CaptureLoop() {
     HANDLE AvrtHandle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &TaskIndex);
 
     while (Running) {
-        Sleep(10);
+        DWORD WaitResult = WaitForSingleObject(CaptureEvent, 200);
+        if (!Running) break;
+        if (WaitResult != WAIT_OBJECT_0) continue;
 
         UINT32 PacketLength = 0;
         HRESULT Result = CaptureClient->GetNextPacketSize(&PacketLength);
