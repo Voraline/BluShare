@@ -50,18 +50,14 @@ static const int StepSizeTable[89] = {
     15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
 };
 
-static AdpcmState LeftState;
-static AdpcmState RightState;
-static RiceState LeftRice;
-static RiceState RightRice;
+static AdpcmState MonoState;
+static RiceState MonoRice;
 static std::vector<uint8_t> BitBuffer;
 static std::vector<uint8_t> FrameBuffer;
 
 static inline void ResetCodecState() {
-    LeftState = AdpcmState{};
-    RightState = AdpcmState{};
-    LeftRice = RiceState{};
-    RightRice = RiceState{};
+    MonoState = AdpcmState{};
+    MonoRice = RiceState{};
 }
 
 static inline uint8_t AdpcmEncodeSample(AdpcmState& State, int16_t Sample) {
@@ -159,20 +155,14 @@ static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Chann
         for (uint32_t I = 0; I < ChunkFrames; ++I) {
             float Left = Samples[I * Channels + 0];
             float Right = (Channels > 1) ? Samples[I * Channels + 1] : Left;
+            float Mono = (Channels > 1) ? (Left + Right) * 0.5f : Left;
 
-            uint8_t LeftCode = AdpcmEncodeSample(LeftState, FloatToInt16(Left));
-            uint32_t LeftMagnitude = LeftCode & 0x7u;
-            int LeftK = RiceParam(LeftRice);
-            Writer.WriteBit((LeftCode >> 3) & 1u);
-            RiceEncode(Writer, LeftMagnitude, LeftK);
-            RiceUpdate(LeftRice, LeftMagnitude);
-
-            uint8_t RightCode = AdpcmEncodeSample(RightState, FloatToInt16(Right));
-            uint32_t RightMagnitude = RightCode & 0x7u;
-            int RightK = RiceParam(RightRice);
-            Writer.WriteBit((RightCode >> 3) & 1u);
-            RiceEncode(Writer, RightMagnitude, RightK);
-            RiceUpdate(RightRice, RightMagnitude);
+            uint8_t MonoCode = AdpcmEncodeSample(MonoState, FloatToInt16(Mono));
+            uint32_t MonoMagnitude = MonoCode & 0x7u;
+            int MonoK = RiceParam(MonoRice);
+            Writer.WriteBit((MonoCode >> 3) & 1u);
+            RiceEncode(Writer, MonoMagnitude, MonoK);
+            RiceUpdate(MonoRice, MonoMagnitude);
         }
         Writer.Flush();
     }
@@ -191,7 +181,7 @@ static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Chann
     FrameBuffer.insert(FrameBuffer.end(), BitBuffer.begin(), BitBuffer.end());
 
     if (!HeaderSent.load(std::memory_order_relaxed)) {
-        StreamHeader Header{ StreamMagic, SampleRate, 2, 16, CodecRiceAdpcm };
+        StreamHeader Header{ StreamMagic, SampleRate, 1, 16, CodecRiceAdpcm };
         if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
             return false;
         }
