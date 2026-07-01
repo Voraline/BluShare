@@ -1,0 +1,78 @@
+#include "AudioCapture.h"
+#include "BluetoothServer.h"
+#include <windows.h>
+#include <cstdio>
+#include <atomic>
+
+#pragma pack(push, 1)
+struct StreamHeader {
+    uint32_t Magic;
+    uint32_t SampleRate;
+    uint16_t Channels;
+    uint16_t BitsPerSample;
+};
+#pragma pack(pop)
+
+static constexpr uint32_t StreamMagic = 0x42415354;
+
+static std::atomic<bool> HeaderSent{ false };
+static std::atomic<bool> ClientAlive{ false };
+static BluetoothServer* GlobalServer = nullptr;
+
+static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate, uint16_t Channels, uint16_t BitsPerSample) {
+    if (!GlobalServer || !ClientAlive.load()) return;
+
+    if (!HeaderSent.load()) {
+        StreamHeader Header{ StreamMagic, SampleRate, Channels, BitsPerSample };
+        if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
+            ClientAlive.store(false);
+            return;
+        }
+        HeaderSent.store(true);
+    }
+
+    if (!GlobalServer->Send(Data, Size)) {
+        ClientAlive.store(false);
+        HeaderSent.store(false);
+    }
+}
+
+int main() {
+    AudioCapture Capture;
+    if (!Capture.Initialize()) {
+        printf("Failed to initialize audio capture\n");
+        return 1;
+    }
+
+    BluetoothServer Server;
+    GlobalServer = &Server;
+    if (!Server.Start()) {
+        printf("Failed to start Bluetooth server\n");
+        return 1;
+    }
+
+    printf("Waiting for Android client...\n");
+
+    while (true) {
+        if (!Server.WaitForClient()) {
+            continue;
+        }
+        printf("Client connected\n");
+        HeaderSent.store(false);
+        ClientAlive.store(true);
+
+        if (!Capture.Start(OnAudioData)) {
+            printf("Failed to start audio capture\n");
+            Server.DropClient();
+            continue;
+        }
+
+        while (ClientAlive.load()) {
+            Sleep(200);
+        }
+
+        Capture.Stop();
+        Server.DropClient();
+        printf("Client disconnected, waiting for reconnection...\n");
+    }
+}
