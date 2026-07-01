@@ -43,7 +43,7 @@ public final class MainActivity extends Activity {
         Root.setBackgroundColor(ColorBackground);
 
         TextView Title = new TextView(this);
-        Title.setText("Select paired Windows PC:");
+        Title.setText("");
         Title.setTextSize(18);
         Title.setTextColor(ColorTextPrimary);
         Root.addView(Title);
