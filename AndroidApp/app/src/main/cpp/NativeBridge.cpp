@@ -6,9 +6,6 @@
 #include <atomic>
 #include <vector>
 
-#define LogTag "BluShareNative"
-#define LogError(...) __android_log_print(ANDROID_LOG_ERROR, LogTag, __VA_ARGS__)
-
 static AAudioStream* PlaybackStream = nullptr;
 static std::atomic<bool> StreamActive{ false };
 static int BytesPerFrame = 4;
@@ -171,7 +168,6 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
 
     AAudioStreamBuilder* Builder = nullptr;
     if (AAudio_createStreamBuilder(&Builder) != AAUDIO_OK || Builder == nullptr) {
-        LogError("Failed to create stream builder");
         return JNI_FALSE;
     }
 
@@ -199,23 +195,19 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
     AAudioStreamBuilder_delete(Builder);
 
     if (Result != AAUDIO_OK || PlaybackStream == nullptr) {
-        LogError("Failed to open stream: %d", Result);
         return JNI_FALSE;
     }
-
-    // Keep just enough buffer to absorb normal Bluetooth jitter (a few bursts),
-    // not the entire capacity. Full capacity = maximum, unnecessary latency.
+    
     int32_t BurstSize = AAudioStream_getFramesPerBurst(PlaybackStream);
     int32_t Capacity = AAudioStream_getBufferCapacityInFrames(PlaybackStream);
     if (BurstSize > 0 && Capacity > 0) {
-        int32_t TargetSize = BurstSize * 3; // tune 2-4x if you hear underrun clicks/pops
+        int32_t TargetSize = BurstSize * 3;
         if (TargetSize > Capacity) TargetSize = Capacity;
         AAudioStream_setBufferSizeInFrames(PlaybackStream, TargetSize);
     }
 
     Result = AAudioStream_requestStart(PlaybackStream);
     if (Result != AAUDIO_OK) {
-        LogError("Failed to start stream: %d", Result);
         AAudioStream_close(PlaybackStream);
         PlaybackStream = nullptr;
         return JNI_FALSE;
