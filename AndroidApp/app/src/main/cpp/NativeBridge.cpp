@@ -83,7 +83,13 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
     AAudioStreamBuilder_setSampleRate(Builder, SampleRate);
     AAudioStreamBuilder_setChannelCount(Builder, Channels);
     AAudioStreamBuilder_setFormat(Builder, Format);
-    AAudioStreamBuilder_setPerformanceMode(Builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    // LOW_LATENCY uses a very small internal buffer, which is great for
+    // games/instruments but leaves no cushion for Bluetooth's natural
+    // timing jitter -- that's what causes the audible "tick" when the
+    // buffer briefly runs dry. NONE uses a larger, more forgiving buffer;
+    // a bit more latency here is a good tradeoff since this isn't a
+    // latency-sensitive use case.
+    AAudioStreamBuilder_setPerformanceMode(Builder, AAUDIO_PERFORMANCE_MODE_NONE);
 
     aaudio_result_t Result = AAudioStreamBuilder_openStream(Builder, &PlaybackStream);
     AAudioStreamBuilder_delete(Builder);
@@ -91,6 +97,13 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
     if (Result != AAUDIO_OK || PlaybackStream == nullptr) {
         LogError("Failed to open stream: %d", Result);
         return JNI_FALSE;
+    }
+
+    // Grow the buffer to its full capacity for extra headroom against
+    // jitter from the Bluetooth link.
+    int32_t Capacity = AAudioStream_getBufferCapacityInFrames(PlaybackStream);
+    if (Capacity > 0) {
+        AAudioStream_setBufferSizeInFrames(PlaybackStream, Capacity);
     }
 
     Result = AAudioStream_requestStart(PlaybackStream);
