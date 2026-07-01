@@ -198,13 +198,15 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
     
-    int32_t BurstSize = AAudioStream_getFramesPerBurst(PlaybackStream);
-    int32_t Capacity = AAudioStream_getBufferCapacityInFrames(PlaybackStream);
-    if (BurstSize > 0 && Capacity > 0) {
-        int32_t TargetSize = BurstSize * 3;
-        if (TargetSize > Capacity) TargetSize = Capacity;
-        AAudioStream_setBufferSizeInFrames(PlaybackStream, TargetSize);
-    }
+    // int32_t BurstSize = AAudioStream_getFramesPerBurst(PlaybackStream);
+    // int32_t Capacity = AAudioStream_getBufferCapacityInFrames(PlaybackStream);
+    // if (BurstSize > 0 && Capacity > 0) {
+    //     int32_t TargetSize = BurstSize * 3;
+    //     if (TargetSize > Capacity) TargetSize = Capacity;
+    //     AAudioStream_setBufferSizeInFrames(PlaybackStream, TargetSize);
+    // }
+
+    AAudioStream_setBufferSizeInFrames(PlaybackStream, AAudioStream_getFramesPerBurst(PlaybackStream) * 4);
 
     Result = AAudioStream_requestStart(PlaybackStream);
     if (Result != AAUDIO_OK) {
