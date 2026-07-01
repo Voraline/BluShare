@@ -23,8 +23,10 @@ static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate,
     if (!GlobalServer || !ClientAlive.load()) return;
 
     if (!HeaderSent.load()) {
+        printf("Sending header: SampleRate=%u Channels=%u BitsPerSample=%u\n", SampleRate, Channels, BitsPerSample);
         StreamHeader Header{ StreamMagic, SampleRate, Channels, BitsPerSample };
         if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
+            printf("Failed to send header, dropping client\n");
             ClientAlive.store(false);
             return;
         }
@@ -32,8 +34,19 @@ static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate,
     }
 
     if (!GlobalServer->Send(Data, Size)) {
+        printf("Send failed after %u bytes, dropping client\n", Size);
         ClientAlive.store(false);
         HeaderSent.store(false);
+        return;
+    }
+
+    static uint64_t TotalBytes = 0;
+    static ULONGLONG LastLog = 0;
+    TotalBytes += Size;
+    ULONGLONG Now = GetTickCount64();
+    if (Now - LastLog > 2000) {
+        printf("Streamed %llu bytes so far\n", (unsigned long long)TotalBytes);
+        LastLog = Now;
     }
 }
 

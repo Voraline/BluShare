@@ -26,7 +26,6 @@ private:
     IAudioClient* Client = nullptr;
     IAudioCaptureClient* CaptureClient = nullptr;
     WAVEFORMATEX* Format = nullptr;
-    HANDLE CaptureEvent = nullptr;
     HANDLE CaptureThread = nullptr;
     volatile bool Running = false;
     DataCallback OnData;
