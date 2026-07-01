@@ -1,4 +1,5 @@
 #pragma once
+#define WIN32_LEAN_AND_MEAN
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <windows.h>
