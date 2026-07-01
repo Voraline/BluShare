@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 if(MSVC)
-    add_compile_options(/O2 /Oi /GL /W3 /EHsc /DNDEBUG)
+    add_compile_options(/O2 /Oi /GL /W3 /EHsc /DNDEBUG /arch:AVX2 /Ot)
     add_link_options(/LTCG)
 endif()
 add_executable(BluShareServer
