@@ -47,7 +47,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: AndroidApp
-          path: AndroidApp/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: AndroidApp/app/build/outputs/apk/release/app-release.apk
 
   package:
     needs: [ build-windows, build-android ]
@@ -61,7 +61,7 @@ jobs:
         run: |
           mkdir -p Package
           cp Artifacts/WindowsServer/BluetoothAudioServer.exe Package/
-          cp Artifacts/AndroidApp/app-release-unsigned.apk Package/BluetoothAudioReceiver.apk
+          cp Artifacts/AndroidApp/app-release.apk Package/BluetoothAudioReceiver.apk
           cd Package && zip -r ../BluetoothAudioStream.zip .
 
       - uses: actions/upload-artifact@v4

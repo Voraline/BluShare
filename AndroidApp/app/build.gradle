@@ -30,10 +30,21 @@ android {
 
     signingConfigs {
         release {
-            storeFile file(project.findProperty("keystorePath") ?: "debug.keystore")
-            storePassword project.findProperty("keystorePassword") ?: "android"
-            keyAlias project.findProperty("keyAlias") ?: "release"
-            keyPassword project.findProperty("keyPassword") ?: "android"
+            if (project.hasProperty("keystorePath")) {
+                storeFile file(project.property("keystorePath"))
+                storePassword project.findProperty("keystorePassword") ?: "android"
+                keyAlias project.findProperty("keyAlias") ?: "release"
+                keyPassword project.findProperty("keyPassword") ?: "android"
+            } else {
+                // No real keystore provided (e.g. plain CI run) — fall back to the
+                // auto-generated debug keystore so the APK is still signed and
+                // installable. AGP creates ~/.android/debug.keystore automatically
+                // if it doesn't already exist, so this works with zero setup.
+                storeFile signingConfigs.debug.storeFile
+                storePassword signingConfigs.debug.storePassword
+                keyAlias signingConfigs.debug.keyAlias
+                keyPassword signingConfigs.debug.keyPassword
+            }
         }
     }
 
