@@ -140,7 +140,7 @@ public final class StreamService extends Service {
 
     private Notification BuildNotification(String Text) {
         return new Notification.Builder(this, ChannelId)
-            .setContentTitle("Bluetooth Audio Receiver")
+            .setContentTitle("BluShare")
             .setContentText(Text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .build();

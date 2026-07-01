@@ -10,9 +10,9 @@
 
     <application
         android:allowBackup="true"
-        android:label="BluetoothAudioReceiver"
+        android:label="BluShare"
         android:icon="@android:drawable/ic_btn_speak_now"
-        android:theme="@android:style/Theme.Material.Light">
+        android:theme="@android:style/Theme.Material">
 
         <activity
             android:name=".MainActivity"

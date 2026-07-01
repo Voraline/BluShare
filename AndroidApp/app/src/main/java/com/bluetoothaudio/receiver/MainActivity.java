@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
@@ -22,6 +23,10 @@ import java.util.Set;
 public final class MainActivity extends Activity {
 
     private static final int PermissionRequestCode = 1001;
+    private static final int ColorBackground = Color.parseColor("#121212");
+    private static final int ColorSurface = Color.parseColor("#1E1E1E");
+    private static final int ColorAccent = Color.parseColor("#4FC3F7");
+    private static final int ColorTextPrimary = Color.parseColor("#FFFFFF");
     private LinearLayout DeviceListLayout;
 
     @Override
@@ -35,10 +40,12 @@ public final class MainActivity extends Activity {
         LinearLayout Root = new LinearLayout(this);
         Root.setOrientation(LinearLayout.VERTICAL);
         Root.setPadding(32, 64, 32, 32);
+        Root.setBackgroundColor(ColorBackground);
 
         TextView Title = new TextView(this);
         Title.setText("Select paired Windows PC:");
         Title.setTextSize(18);
+        Title.setTextColor(ColorTextPrimary);
         Root.addView(Title);
 
         DeviceListLayout = new LinearLayout(this);
@@ -47,10 +54,13 @@ public final class MainActivity extends Activity {
 
         Button RefreshButton = new Button(this);
         RefreshButton.setText("Refresh Paired Devices");
+        RefreshButton.setBackgroundColor(ColorSurface);
+        RefreshButton.setTextColor(ColorAccent);
         RefreshButton.setOnClickListener(View -> PopulateDeviceList());
         Root.addView(RefreshButton);
 
         ScrollView Scroll = new ScrollView(this);
+        Scroll.setBackgroundColor(ColorBackground);
         Scroll.addView(Root);
         setContentView(Scroll);
     }
@@ -97,6 +107,8 @@ public final class MainActivity extends Activity {
         for (BluetoothDevice Device : BondedDevices) {
             Button DeviceButton = new Button(this);
             DeviceButton.setText(Device.getName() + "\n" + Device.getAddress());
+            DeviceButton.setBackgroundColor(ColorSurface);
+            DeviceButton.setTextColor(ColorTextPrimary);
             DeviceButton.setOnClickListener(View -> StartStreamService(Device.getAddress()));
             DeviceListLayout.addView(DeviceButton);
         }
