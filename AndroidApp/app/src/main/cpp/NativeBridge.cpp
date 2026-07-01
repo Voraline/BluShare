@@ -193,7 +193,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
     AAudioStreamBuilder_setSampleRate(Builder, SampleRate);
     AAudioStreamBuilder_setChannelCount(Builder, Channels);
     AAudioStreamBuilder_setFormat(Builder, Format);
-    AAudioStreamBuilder_setPerformanceMode(Builder, AAUDIO_PERFORMANCE_MODE_NONE);
+    AAudioStreamBuilder_setPerformanceMode(Builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
 
     aaudio_result_t Result = AAudioStreamBuilder_openStream(Builder, &PlaybackStream);
     AAudioStreamBuilder_delete(Builder);
@@ -203,9 +203,14 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
+    // Keep just enough buffer to absorb normal Bluetooth jitter (a few bursts),
+    // not the entire capacity. Full capacity = maximum, unnecessary latency.
+    int32_t BurstSize = AAudioStream_getFramesPerBurst(PlaybackStream);
     int32_t Capacity = AAudioStream_getBufferCapacityInFrames(PlaybackStream);
-    if (Capacity > 0) {
-        AAudioStream_setBufferSizeInFrames(PlaybackStream, Capacity);
+    if (BurstSize > 0 && Capacity > 0) {
+        int32_t TargetSize = BurstSize * 3; // tune 2-4x if you hear underrun clicks/pops
+        if (TargetSize > Capacity) TargetSize = Capacity;
+        AAudioStream_setBufferSizeInFrames(PlaybackStream, TargetSize);
     }
 
     Result = AAudioStream_requestStart(PlaybackStream);
