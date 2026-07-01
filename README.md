@@ -30,4 +30,4 @@ gradle assembleRelease
 
 ## CI
 
-`.github/workflows/build.yml` builds both targets on every push and publishes a combined `BluetoothAudioStream.zip` artifact containing the Windows executable and the Android APK.
+`.github/workflows/build.yml` builds both targets on every push and publishes a combined `BluShare.zip` artifact containing the Windows executable and the Android APK.
