@@ -19,7 +19,7 @@ target_link_libraries(BluShareNative
 target_compile_options(BluShareNative PRIVATE
     -O3
     -march=armv8.2-a+simd
-    -mtune=cortex-a76
+    -mtune=cortex-a55
     -flto=thin
     -funroll-loops
     -fomit-frame-pointer
