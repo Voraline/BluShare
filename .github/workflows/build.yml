@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S WindowsServer -B WindowsServer/Build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build WindowsServer/Build --config Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WindowsServer
+          path: WindowsServer/Build/Release/BluetoothAudioServer.exe
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Build APK
+        working-directory: AndroidApp
+        run: gradle assembleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AndroidApp
+          path: AndroidApp/app/build/outputs/apk/release/app-release-unsigned.apk
+
+  package:
+    needs: [ build-windows, build-android ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: Artifacts
+
+      - name: Create zip
+        run: |
+          mkdir -p Package
+          cp Artifacts/WindowsServer/BluetoothAudioServer.exe Package/
+          cp Artifacts/AndroidApp/app-release-unsigned.apk Package/BluetoothAudioReceiver.apk
+          cd Package && zip -r ../BluetoothAudioStream.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BluetoothAudioStream
+          path: BluetoothAudioStream.zip
