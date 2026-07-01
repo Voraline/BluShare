@@ -1,4 +1,4 @@
-# BluetoothAudioStream
+# BluShare
 
 Streams Windows system audio to an Android device over classic Bluetooth (RFCOMM/SPP).
 
@@ -24,7 +24,7 @@ gradle assembleRelease
 ## Usage
 
 1. Pair the Windows PC and Android device over Bluetooth first (Windows Settings > Bluetooth).
-2. Run `BluetoothAudioServer.exe` on Windows. It registers an SPP service and waits for a connection.
+2. Run `BluShare.exe` on Windows. It registers an SPP service and waits for a connection.
 3. Open the Android app, grant Bluetooth permissions, and tap the paired PC in the list.
 4. Audio starts streaming automatically once connected.
 
