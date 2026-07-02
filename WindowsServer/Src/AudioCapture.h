@@ -18,7 +18,7 @@ public:
     bool Start(DataCallback Callback);
     void Stop();
 
-    static constexpr bool MuteWhilePlaying = true;
+    static constexpr bool MuteWhilePlaying = false;
 
 private:
     static DWORD WINAPI ThreadProc(LPVOID Param);
