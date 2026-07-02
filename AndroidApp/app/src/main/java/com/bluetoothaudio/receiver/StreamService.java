@@ -85,11 +85,17 @@ public final class StreamService extends Service {
                 return;
             }
 
-            byte[] Buffer = new byte[16384];
+            byte[] LengthBytes = new byte[2];
+            byte[] Packet = new byte[4096];
             while (Running) {
-                int Read = Input.read(Buffer);
-                if (Read <= 0) break;
-                NativeBridge.NativeWrite(Buffer, Read);
+                if (!ReadFully(Input, LengthBytes, 2)) break;
+                int PacketLength = (LengthBytes[0] & 0xFF) | ((LengthBytes[1] & 0xFF) << 8);
+                if (PacketLength <= 0 || PacketLength > 4000) break;
+                if (Packet.length < PacketLength) {
+                    Packet = new byte[PacketLength];
+                }
+                if (!ReadFully(Input, Packet, PacketLength)) break;
+                NativeBridge.NativeWrite(Packet, PacketLength);
             }
         } catch (Exception Error) {
             Log.e(Tag, "Stream error", Error);

@@ -4,6 +4,17 @@ project(BluShareNative CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(FetchContent)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG v1.5.2
+)
+FetchContent_MakeAvailable(opus)
+
 add_library(BluShareNative SHARED
     NativeBridge.cpp
 )
@@ -14,6 +25,7 @@ find_library(AAudioLib aaudio)
 target_link_libraries(BluShareNative
     ${LogLib}
     ${AAudioLib}
+    opus
 )
 
 target_compile_options(BluShareNative PRIVATE
