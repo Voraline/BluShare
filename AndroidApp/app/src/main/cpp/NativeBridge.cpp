@@ -50,7 +50,13 @@ struct RiceState {
 
 static AdpcmState LeftDecoderState;
 static AdpcmState RightDecoderState;
+struct LosslessPredictorState {
+    int32_t Prev1 = 0;
+    int32_t Prev2 = 0;
+};
+
 static PredictorState MonoPredictor;
+static LosslessPredictorState MonoLossless;
 static RiceState MonoRice;
 static std::vector<int16_t> DecodeBuffer;
 static std::vector<uint8_t> PendingBytes;
@@ -105,6 +111,17 @@ static inline int16_t DecodePredictiveSample(PredictorState& State, uint32_t Cod
     AdaptStep(State.StepSize, Level < 0 ? -Level : Level);
 
     return static_cast<int16_t>(Reconstructed);
+}
+
+static inline int16_t DecodeLosslessSample(LosslessPredictorState& State, uint32_t Code) {
+    int32_t Diff = ZigzagDecode(Code);
+    int32_t Predicted = 2 * State.Prev1 - State.Prev2;
+    int32_t Sample = Predicted + Diff;
+
+    State.Prev2 = State.Prev1;
+    State.Prev1 = Sample;
+
+    return static_cast<int16_t>(Sample);
 }
 
 static inline int RiceParam(const RiceState& State) {
@@ -168,7 +185,11 @@ static void DecodePredictiveFrame(const uint8_t* FrameData, uint16_t PayloadLeng
         int K = RiceParam(MonoRice);
         uint32_t Code = RiceDecode(Reader, K);
         RiceUpdate(MonoRice, Code);
-        DecodeBuffer.push_back(DecodePredictiveSample(MonoPredictor, Code));
+        if (ActiveCodec == 4) {
+            DecodeBuffer.push_back(DecodeLosslessSample(MonoLossless, Code));
+        } else {
+            DecodeBuffer.push_back(DecodePredictiveSample(MonoPredictor, Code));
+        }
     }
 
     int32_t FrameCountOut = static_cast<int32_t>(DecodeBuffer.size());
@@ -205,7 +226,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
-    aaudio_format_t Format = (Codec == 1 || Codec == 3 || BitsPerSample == 16) ? AAUDIO_FORMAT_PCM_I16 : AAUDIO_FORMAT_PCM_FLOAT;
+    aaudio_format_t Format = (Codec == 1 || Codec == 3 || Codec == 4 || BitsPerSample == 16) ? AAUDIO_FORMAT_PCM_I16 : AAUDIO_FORMAT_PCM_FLOAT;
     BytesPerFrame = ((BitsPerSample == 16) ? 2 : 4) * Channels;
     ActiveChannels = Channels;
     ActiveCodec = Codec;
@@ -213,6 +234,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
     LeftDecoderState = AdpcmState{};
     RightDecoderState = AdpcmState{};
     MonoPredictor = PredictorState{};
+    MonoLossless = LosslessPredictorState{};
     MonoRice = RiceState{};
     DecodeBuffer.reserve(16384);
     PendingBytes.clear();
@@ -254,7 +276,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeWrite(JNIEnv* Env, jclass Cl
     jbyte* Bytes = static_cast<jbyte*>(Env->GetPrimitiveArrayCritical(Data, nullptr));
     if (Bytes == nullptr) return;
 
-    if (ActiveCodec == 3) {
+    if (ActiveCodec == 3 || ActiveCodec == 4) {
         size_t OldSize = PendingBytes.size();
         PendingBytes.resize(OldSize + static_cast<size_t>(Length));
         std::memcpy(PendingBytes.data() + OldSize, Bytes, static_cast<size_t>(Length));
