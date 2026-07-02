@@ -31,7 +31,7 @@ bool AudioCapture::Initialize() {
     Result = Client->GetMixFormat(&Format);
     if (FAILED(Result)) return false;
 
-    REFERENCE_TIME BufferDuration = 20000000;
+    REFERENCE_TIME BufferDuration = 5000000;
     Result = Client->Initialize(AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
         BufferDuration, 0, Format, nullptr);
