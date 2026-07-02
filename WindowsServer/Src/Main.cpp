@@ -17,84 +17,76 @@ struct StreamHeader {
 #pragma pack(pop)
 
 static constexpr uint32_t StreamMagic = 0x42415354;
-static constexpr uint8_t CodecRiceAdpcm = 2;
+static constexpr uint8_t CodecPredictiveRice = 3;
 static constexpr uint32_t MaxChunkFrames = 65535;
+static constexpr int32_t MinStepSize = 2;
+static constexpr int32_t MaxStepSize = 512;
+static constexpr uint32_t RiceEscapeThreshold = 24;
+static constexpr int MaxRiceParam = 20;
 
 static std::atomic<bool> HeaderSent{ false };
 static std::atomic<bool> ClientAlive{ false };
 static BluetoothServer* GlobalServer = nullptr;
 
-struct AdpcmState {
-    int Predictor = 0;
-    int Index = 0;
+struct PredictorState {
+    int32_t Prev1 = 0;
+    int32_t Prev2 = 0;
+    int32_t StepSize = 16;
 };
 
 struct RiceState {
     uint32_t RunningSum = 32;
 };
 
-static const int IndexTable[16] = {
-    -1, -1, -1, -1, 2, 4, 6, 8,
-    -1, -1, -1, -1, 2, 4, 6, 8
-};
-
-static const int StepSizeTable[89] = {
-    7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
-    19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
-    50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
-    130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
-    337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
-    876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
-    2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
-    5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
-    15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
-};
-
-static AdpcmState MonoState;
+static PredictorState MonoPredictor;
 static RiceState MonoRice;
 static std::vector<uint8_t> BitBuffer;
 static std::vector<uint8_t> FrameBuffer;
 
 static inline void ResetCodecState() {
-    MonoState = AdpcmState{};
+    MonoPredictor = PredictorState{};
     MonoRice = RiceState{};
 }
 
-static inline uint8_t AdpcmEncodeSample(AdpcmState& State, int16_t Sample) {
-    int Diff = Sample - State.Predictor;
-    int Sign = 0;
-    if (Diff < 0) { Sign = 8; Diff = -Diff; }
-
-    int Step = StepSizeTable[State.Index];
-    int DiffAccum = Step >> 3;
-    int Code = 0;
-
-    int TempStep = Step;
-    if (Diff >= TempStep) { Code |= 4; Diff -= TempStep; DiffAccum += TempStep; }
-    TempStep >>= 1;
-    if (Diff >= TempStep) { Code |= 2; Diff -= TempStep; DiffAccum += TempStep; }
-    TempStep >>= 1;
-    if (Diff >= TempStep) { Code |= 1; DiffAccum += TempStep; }
-
-    Code |= Sign;
-
-    if (Sign) State.Predictor -= DiffAccum;
-    else State.Predictor += DiffAccum;
-
-    if (State.Predictor > 32767) State.Predictor = 32767;
-    if (State.Predictor < -32768) State.Predictor = -32768;
-
-    State.Index += IndexTable[Code];
-    if (State.Index < 0) State.Index = 0;
-    if (State.Index > 88) State.Index = 88;
-
-    return static_cast<uint8_t>(Code);
+static inline int16_t ClampSample(int32_t Value) {
+    if (Value > 32767) return 32767;
+    if (Value < -32768) return -32768;
+    return static_cast<int16_t>(Value);
 }
 
 static inline int16_t FloatToInt16(float Value) {
     if (Value > 1.0f) Value = 1.0f;
     if (Value < -1.0f) Value = -1.0f;
     return static_cast<int16_t>(Value * 32767.0f);
+}
+
+static inline uint32_t ZigzagEncode(int32_t Value) {
+    return (static_cast<uint32_t>(Value) << 1) ^ static_cast<uint32_t>(Value >> 31);
+}
+
+static inline void AdaptStep(int32_t& StepSize, int32_t AbsLevel) {
+    if (AbsLevel <= 1) {
+        StepSize -= StepSize >> 4;
+    } else {
+        StepSize += (StepSize * (AbsLevel - 1)) >> 2;
+    }
+    if (StepSize < MinStepSize) StepSize = MinStepSize;
+    if (StepSize > MaxStepSize) StepSize = MaxStepSize;
+}
+
+static inline uint32_t EncodeSample(PredictorState& State, int16_t Sample) {
+    int32_t Predicted = ClampSample(2 * State.Prev1 - State.Prev2);
+    int32_t Diff = static_cast<int32_t>(Sample) - Predicted;
+    int32_t Step = State.StepSize;
+    int32_t Half = Step >> 1;
+    int32_t Level = (Diff >= 0) ? (Diff + Half) / Step : -((-Diff + Half) / Step);
+    int32_t Reconstructed = ClampSample(Predicted + Level * Step);
+
+    State.Prev2 = State.Prev1;
+    State.Prev1 = Reconstructed;
+    AdaptStep(State.StepSize, Level < 0 ? -Level : Level);
+
+    return ZigzagEncode(Level);
 }
 
 class BitWriter {
@@ -129,7 +121,7 @@ private:
 static inline int RiceParam(const RiceState& State) {
     uint32_t Mean = State.RunningSum >> 5;
     int K = 0;
-    while (K < 3 && (1u << (K + 1)) <= Mean + 1) ++K;
+    while (K < MaxRiceParam && (1u << (K + 1)) <= Mean + 1) ++K;
     return K;
 }
 
@@ -138,14 +130,15 @@ static inline void RiceUpdate(RiceState& State, uint32_t Value) {
 }
 
 static inline void RiceEncode(BitWriter& Writer, uint32_t Value, int K) {
-    if (K >= 3) {
-        Writer.WriteBits(Value & 0x7u, 3);
-        return;
-    }
     uint32_t Quotient = Value >> K;
-    while (Quotient--) Writer.WriteBit(1);
-    Writer.WriteBit(0);
-    if (K > 0) Writer.WriteBits(Value & ((1u << K) - 1), K);
+    if (Quotient < RiceEscapeThreshold) {
+        for (uint32_t I = 0; I < Quotient; ++I) Writer.WriteBit(1);
+        Writer.WriteBit(0);
+        if (K > 0) Writer.WriteBits(Value & ((1u << K) - 1), K);
+    } else {
+        for (uint32_t I = 0; I < RiceEscapeThreshold; ++I) Writer.WriteBit(1);
+        Writer.WriteBits(Value, 32);
+    }
 }
 
 static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Channels, uint32_t SampleRate) {
@@ -157,12 +150,10 @@ static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Chann
             float Right = (Channels > 1) ? Samples[I * Channels + 1] : Left;
             float Mono = (Channels > 1) ? (Left + Right) * 0.5f : Left;
 
-            uint8_t MonoCode = AdpcmEncodeSample(MonoState, FloatToInt16(Mono));
-            uint32_t MonoMagnitude = MonoCode & 0x7u;
-            int MonoK = RiceParam(MonoRice);
-            Writer.WriteBit((MonoCode >> 3) & 1u);
-            RiceEncode(Writer, MonoMagnitude, MonoK);
-            RiceUpdate(MonoRice, MonoMagnitude);
+            uint32_t Code = EncodeSample(MonoPredictor, FloatToInt16(Mono));
+            int K = RiceParam(MonoRice);
+            RiceEncode(Writer, Code, K);
+            RiceUpdate(MonoRice, Code);
         }
         Writer.Flush();
     }
@@ -181,7 +172,7 @@ static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Chann
     FrameBuffer.insert(FrameBuffer.end(), BitBuffer.begin(), BitBuffer.end());
 
     if (!HeaderSent.load(std::memory_order_relaxed)) {
-        StreamHeader Header{ StreamMagic, SampleRate, 1, 16, CodecRiceAdpcm };
+        StreamHeader Header{ StreamMagic, SampleRate, 1, 16, CodecPredictiveRice };
         if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
             return false;
         }
