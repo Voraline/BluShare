@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 class AudioCapture {
 public:
@@ -35,4 +36,5 @@ private:
     HANDLE CaptureEvent = nullptr;
     volatile bool Running = false;
     DataCallback OnData;
+    std::vector<uint8_t> SilenceScratch;
 };

@@ -106,9 +106,17 @@ void AudioCapture::CaptureLoop() {
             if (FAILED(Result)) break;
 
             uint32_t ByteCount = FramesAvailable * Format->nBlockAlign;
-            if (OnData && ByteCount > 0 && !(Flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
-                OnData(reinterpret_cast<const uint8_t*>(Data), ByteCount,
-                    Format->nSamplesPerSec, Format->nChannels, Format->wBitsPerSample);
+            if (OnData && ByteCount > 0) {
+                if (Flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+                    if (SilenceScratch.size() < ByteCount) {
+                        SilenceScratch.assign(ByteCount, 0);
+                    }
+                    OnData(SilenceScratch.data(), ByteCount,
+                        Format->nSamplesPerSec, Format->nChannels, Format->wBitsPerSample);
+                } else {
+                    OnData(reinterpret_cast<const uint8_t*>(Data), ByteCount,
+                        Format->nSamplesPerSec, Format->nChannels, Format->wBitsPerSample);
+                }
             }
 
             CaptureClient->ReleaseBuffer(FramesAvailable);

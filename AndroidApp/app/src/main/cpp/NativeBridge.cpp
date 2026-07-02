@@ -53,7 +53,17 @@ static AdpcmState RightDecoderState;
 struct LosslessPredictorState {
     int32_t Prev1 = 0;
     int32_t Prev2 = 0;
+    int32_t FilterWeight = 0;
+    int32_t FilterHistory = 0;
 };
+
+static constexpr int32_t FilterShift = 8;
+static constexpr int32_t FilterWeightMax = 1 << 20;
+static constexpr int32_t FilterWeightMin = -(1 << 20);
+
+static inline int32_t SignOf(int32_t Value) {
+    return (Value > 0) - (Value < 0);
+}
 
 static PredictorState MonoPredictor;
 static LosslessPredictorState MonoLossless;
@@ -114,10 +124,20 @@ static inline int16_t DecodePredictiveSample(PredictorState& State, uint32_t Cod
 }
 
 static inline int16_t DecodeLosslessSample(LosslessPredictorState& State, uint32_t Code) {
-    int32_t Diff = ZigzagDecode(Code);
-    int32_t Predicted = 2 * State.Prev1 - State.Prev2;
-    int32_t Sample = Predicted + Diff;
+    int32_t Residual2 = ZigzagDecode(Code);
 
+    int32_t Predicted1 = 2 * State.Prev1 - State.Prev2;
+    int64_t Predicted2 = (static_cast<int64_t>(State.FilterWeight) * State.FilterHistory) >> FilterShift;
+
+    int32_t Residual1 = Residual2 + static_cast<int32_t>(Predicted2);
+    int32_t Sample = Residual1 + Predicted1;
+
+    if (Residual2 > 0) State.FilterWeight += SignOf(State.FilterHistory);
+    else if (Residual2 < 0) State.FilterWeight -= SignOf(State.FilterHistory);
+    if (State.FilterWeight > FilterWeightMax) State.FilterWeight = FilterWeightMax;
+    if (State.FilterWeight < FilterWeightMin) State.FilterWeight = FilterWeightMin;
+
+    State.FilterHistory = Residual1;
     State.Prev2 = State.Prev1;
     State.Prev1 = Sample;
 
@@ -139,32 +159,49 @@ class BitReader {
 public:
     BitReader(const uint8_t* InData, size_t InLength) : Data(InData), Length(InLength) {}
 
-    uint32_t ReadBit() {
-        if (BytePos >= Length) return 0;
-        uint32_t Bit = (Data[BytePos] >> (7 - BitPos)) & 1u;
-        if (++BitPos == 8) { BitPos = 0; ++BytePos; }
-        return Bit;
+    inline void Refill() {
+        while (BitCount <= 56 && BytePos < Length) {
+            Accumulator |= (static_cast<uint64_t>(Data[BytePos]) << (56 - BitCount));
+            ++BytePos;
+            BitCount += 8;
+        }
     }
 
-    uint32_t ReadBits(int Count) {
-        uint32_t Value = 0;
-        for (int I = 0; I < Count; ++I) Value = (Value << 1) | ReadBit();
+    inline uint32_t ReadBits(int Count) {
+        if (Count <= 0) return 0;
+        if (BitCount < Count) Refill();
+        if (BitCount < Count) Count = BitCount;
+        if (Count <= 0) return 0;
+        uint32_t Value = static_cast<uint32_t>(Accumulator >> (64 - Count));
+        Accumulator <<= Count;
+        BitCount -= Count;
         return Value;
+    }
+
+    inline uint32_t ReadUnary(uint32_t Threshold) {
+        uint32_t Quotient = 0;
+        while (Quotient < Threshold) {
+            if (BitCount == 0) Refill();
+            if (BitCount == 0) break;
+            uint32_t Bit = static_cast<uint32_t>(Accumulator >> 63);
+            Accumulator <<= 1;
+            --BitCount;
+            if (Bit == 0) break;
+            ++Quotient;
+        }
+        return Quotient;
     }
 
 private:
     const uint8_t* Data;
     size_t Length;
     size_t BytePos = 0;
-    int BitPos = 0;
+    uint64_t Accumulator = 0;
+    int BitCount = 0;
 };
 
 static inline uint32_t RiceDecode(BitReader& Reader, int K) {
-    uint32_t Quotient = 0;
-    while (Quotient < RiceEscapeThreshold) {
-        if (Reader.ReadBit() == 0) break;
-        ++Quotient;
-    }
+    uint32_t Quotient = Reader.ReadUnary(RiceEscapeThreshold);
     if (Quotient == RiceEscapeThreshold) {
         return Reader.ReadBits(32);
     }

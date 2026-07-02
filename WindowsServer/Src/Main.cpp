@@ -43,7 +43,17 @@ struct RiceState {
 struct LosslessPredictorState {
     int32_t Prev1 = 0;
     int32_t Prev2 = 0;
+    int32_t FilterWeight = 0;
+    int32_t FilterHistory = 0;
 };
+
+static constexpr int32_t FilterShift = 8;
+static constexpr int32_t FilterWeightMax = 1 << 20;
+static constexpr int32_t FilterWeightMin = -(1 << 20);
+
+static inline int32_t SignOf(int32_t Value) {
+    return (Value > 0) - (Value < 0);
+}
 
 static PredictorState MonoPredictor;
 static LosslessPredictorState MonoLossless;
@@ -99,41 +109,49 @@ static inline uint32_t EncodeSample(PredictorState& State, int16_t Sample) {
 }
 
 static inline uint32_t EncodeSampleLossless(LosslessPredictorState& State, int16_t Sample) {
-    int32_t Predicted = 2 * State.Prev1 - State.Prev2;
-    int32_t Diff = static_cast<int32_t>(Sample) - Predicted;
+    int32_t Predicted1 = 2 * State.Prev1 - State.Prev2;
+    int32_t Residual1 = static_cast<int32_t>(Sample) - Predicted1;
 
+    int64_t Predicted2 = (static_cast<int64_t>(State.FilterWeight) * State.FilterHistory) >> FilterShift;
+    int32_t Residual2 = Residual1 - static_cast<int32_t>(Predicted2);
+
+    if (Residual2 > 0) State.FilterWeight += SignOf(State.FilterHistory);
+    else if (Residual2 < 0) State.FilterWeight -= SignOf(State.FilterHistory);
+    if (State.FilterWeight > FilterWeightMax) State.FilterWeight = FilterWeightMax;
+    if (State.FilterWeight < FilterWeightMin) State.FilterWeight = FilterWeightMin;
+
+    State.FilterHistory = Residual1;
     State.Prev2 = State.Prev1;
     State.Prev1 = Sample;
 
-    return ZigzagEncode(Diff);
+    return ZigzagEncode(Residual2);
 }
 
 class BitWriter {
 public:
     explicit BitWriter(std::vector<uint8_t>& Out) : Output(Out) {}
 
-    void WriteBit(uint32_t Bit) {
-        Accumulator = (Accumulator << 1) | (Bit & 1u);
-        if (++BitCount == 8) {
-            Output.push_back(static_cast<uint8_t>(Accumulator));
-            Accumulator = 0;
-            BitCount = 0;
-        }
-    }
-
-    void WriteBits(uint32_t Value, int Count) {
-        for (int I = Count - 1; I >= 0; --I) {
-            WriteBit((Value >> I) & 1u);
+    inline void WriteBits(uint32_t Value, int Count) {
+        if (Count <= 0) return;
+        uint64_t Masked = (Count == 32) ? Value : (Value & ((1u << Count) - 1u));
+        Accumulator = (Accumulator << Count) | Masked;
+        BitCount += Count;
+        while (BitCount >= 8) {
+            BitCount -= 8;
+            Output.push_back(static_cast<uint8_t>(Accumulator >> BitCount));
         }
     }
 
     void Flush() {
-        while (BitCount != 0) WriteBit(0);
+        if (BitCount > 0) {
+            Output.push_back(static_cast<uint8_t>(Accumulator << (8 - BitCount)));
+            BitCount = 0;
+        }
     }
 
 private:
     std::vector<uint8_t>& Output;
-    uint32_t Accumulator = 0;
+    uint64_t Accumulator = 0;
     int BitCount = 0;
 };
 
@@ -151,11 +169,12 @@ static inline void RiceUpdate(RiceState& State, uint32_t Value) {
 static inline void RiceEncode(BitWriter& Writer, uint32_t Value, int K) {
     uint32_t Quotient = Value >> K;
     if (Quotient < RiceEscapeThreshold) {
-        for (uint32_t I = 0; I < Quotient; ++I) Writer.WriteBit(1);
-        Writer.WriteBit(0);
+        uint32_t UnaryBits = Quotient + 1;
+        uint32_t UnaryValue = (Quotient == 0) ? 0u : (((1u << Quotient) - 1u) << 1);
+        Writer.WriteBits(UnaryValue, static_cast<int>(UnaryBits));
         if (K > 0) Writer.WriteBits(Value & ((1u << K) - 1), K);
     } else {
-        for (uint32_t I = 0; I < RiceEscapeThreshold; ++I) Writer.WriteBit(1);
+        Writer.WriteBits((1u << RiceEscapeThreshold) - 1u, static_cast<int>(RiceEscapeThreshold));
         Writer.WriteBits(Value, 32);
     }
 }
