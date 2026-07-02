@@ -18,6 +18,8 @@ struct StreamHeader {
 
 static constexpr uint32_t StreamMagic = 0x42415354;
 static constexpr uint8_t CodecPredictiveRice = 3;
+static constexpr uint8_t CodecLosslessRice = 4;
+static constexpr bool UseLossless = true;
 static constexpr uint32_t MaxChunkFrames = 65535;
 static constexpr int32_t MinStepSize = 2;
 static constexpr int32_t MaxStepSize = 512;
@@ -38,13 +40,20 @@ struct RiceState {
     uint32_t RunningSum = 32;
 };
 
+struct LosslessPredictorState {
+    int32_t Prev1 = 0;
+    int32_t Prev2 = 0;
+};
+
 static PredictorState MonoPredictor;
+static LosslessPredictorState MonoLossless;
 static RiceState MonoRice;
 static std::vector<uint8_t> BitBuffer;
 static std::vector<uint8_t> FrameBuffer;
 
 static inline void ResetCodecState() {
     MonoPredictor = PredictorState{};
+    MonoLossless = LosslessPredictorState{};
     MonoRice = RiceState{};
 }
 
@@ -87,6 +96,16 @@ static inline uint32_t EncodeSample(PredictorState& State, int16_t Sample) {
     AdaptStep(State.StepSize, Level < 0 ? -Level : Level);
 
     return ZigzagEncode(Level);
+}
+
+static inline uint32_t EncodeSampleLossless(LosslessPredictorState& State, int16_t Sample) {
+    int32_t Predicted = 2 * State.Prev1 - State.Prev2;
+    int32_t Diff = static_cast<int32_t>(Sample) - Predicted;
+
+    State.Prev2 = State.Prev1;
+    State.Prev1 = Sample;
+
+    return ZigzagEncode(Diff);
 }
 
 class BitWriter {
@@ -150,7 +169,9 @@ static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Chann
             float Right = (Channels > 1) ? Samples[I * Channels + 1] : Left;
             float Mono = (Channels > 1) ? (Left + Right) * 0.5f : Left;
 
-            uint32_t Code = EncodeSample(MonoPredictor, FloatToInt16(Mono));
+            int16_t Int16Sample = FloatToInt16(Mono);
+            uint32_t Code = UseLossless ? EncodeSampleLossless(MonoLossless, Int16Sample)
+                                         : EncodeSample(MonoPredictor, Int16Sample);
             int K = RiceParam(MonoRice);
             RiceEncode(Writer, Code, K);
             RiceUpdate(MonoRice, Code);
@@ -172,7 +193,7 @@ static bool SendChunk(const float* Samples, uint32_t ChunkFrames, uint16_t Chann
     FrameBuffer.insert(FrameBuffer.end(), BitBuffer.begin(), BitBuffer.end());
 
     if (!HeaderSent.load(std::memory_order_relaxed)) {
-        StreamHeader Header{ StreamMagic, SampleRate, 1, 16, CodecPredictiveRice };
+        StreamHeader Header{ StreamMagic, SampleRate, 1, 16, UseLossless ? CodecLosslessRice : CodecPredictiveRice };
         if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
             return false;
         }
