@@ -67,7 +67,12 @@ void BluetoothServer::UnregisterService() {
 
 bool BluetoothServer::WaitForClient() {
     ClientSocket = accept(ListenSocket, nullptr, nullptr);
-    return ClientSocket != INVALID_SOCKET;
+    if (ClientSocket == INVALID_SOCKET) return false;
+
+    int SendBufSize = 4096;
+    setsockopt(ClientSocket, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&SendBufSize), sizeof(SendBufSize));
+
+    return true;
 }
 
 bool BluetoothServer::Send(const uint8_t* Data, uint32_t Size) {
