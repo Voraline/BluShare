@@ -15,7 +15,6 @@ set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     opus
     GIT_REPOSITORY https://github.com/xiph/opus.git
-    GIT_TAG v1.5.2
 )
 FetchContent_MakeAvailable(opus)
 
