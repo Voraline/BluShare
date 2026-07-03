@@ -46,7 +46,7 @@ static void UpdateKbpsDisplay(uint32_t Bytes) {
     ULONGLONG Elapsed = Now - KbpsWindowStartTick;
     if (Elapsed >= 1000) {
         double Kbps = (KbpsBytesAccum * 8.0) / static_cast<double>(Elapsed);
-        printf("\r%.1f Kbps    ", Kbps);
+        printf("\r%.1f", Kbps);
         fflush(stdout);
         KbpsBytesAccum = 0;
         KbpsWindowStartTick = Now;
