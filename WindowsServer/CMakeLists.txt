@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 if(MSVC)
-    add_compile_options(/O2 /Oi /GL /W3 /DNDEBUG /arch:AVX2 /Ot /GS- /Ob3)
+    add_compile_options(/arch:AVX2)
     add_link_options(/LTCG)
 endif()
 
