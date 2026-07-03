@@ -52,7 +52,7 @@ target_compile_options(BluShareNative PRIVATE
     -D_FORTIFY_SOURCE=0
 )
 target_link_options(BluShareNative PRIVATE
-    -flto=thin
+    -flto=full
     -Wl,--gc-sections
     -Wl,-O3
     -Wl,--as-needed
