@@ -72,6 +72,9 @@ bool BluetoothServer::WaitForClient() {
     int SendBufSize = 4096;
     setsockopt(ClientSocket, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&SendBufSize), sizeof(SendBufSize));
 
+    DWORD SendTimeoutMs = 500;
+    setsockopt(ClientSocket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&SendTimeoutMs), sizeof(SendTimeoutMs));
+
     return true;
 }
 

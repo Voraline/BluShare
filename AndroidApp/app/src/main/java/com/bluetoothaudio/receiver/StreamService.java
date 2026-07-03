@@ -50,23 +50,37 @@ public final class StreamService extends Service {
 
     private void StartWorker(String DeviceAddress) {
         Running = true;
-        WorkerThread = new Thread(() -> RunStream(DeviceAddress));
+        WorkerThread = new Thread(() -> {
+            while (Running) {
+                boolean Connected = RunStream(DeviceAddress);
+                if (!Running) break;
+                UpdateNotification("Reconnecting...");
+                try {
+                    Thread.sleep(Connected ? 500 : 2000);
+                } catch (InterruptedException Ignored) {
+                    break;
+                }
+            }
+            stopSelf();
+        });
         WorkerThread.start();
     }
 
-    private void RunStream(String DeviceAddress) {
+    private boolean RunStream(String DeviceAddress) {
+        boolean Connected = false;
         try {
             BluetoothAdapter Adapter = BluetoothAdapter.getDefaultAdapter();
             BluetoothDevice Device = Adapter.getRemoteDevice(DeviceAddress);
             Socket = Device.createRfcommSocketToServiceRecord(SppUuid);
             Adapter.cancelDiscovery();
             Socket.connect();
+            Connected = true;
 
             UpdateNotification("Connected");
             InputStream Input = Socket.getInputStream();
 
             byte[] HeaderBytes = new byte[13];
-            if (!ReadFully(Input, HeaderBytes, 13)) return;
+            if (!ReadFully(Input, HeaderBytes, 13)) return Connected;
 
             ByteBuffer HeaderBuffer = ByteBuffer.wrap(HeaderBytes).order(ByteOrder.LITTLE_ENDIAN);
             int Magic = HeaderBuffer.getInt();
@@ -77,12 +91,12 @@ public final class StreamService extends Service {
 
             if (Magic != StreamMagic) {
                 Log.e(Tag, "Invalid stream header");
-                return;
+                return Connected;
             }
 
             if (!NativeBridge.NativeInit(SampleRate, Channels, BitsPerSample, Codec)) {
                 Log.e(Tag, "Failed to initialize native audio player");
-                return;
+                return Connected;
             }
 
             byte[] LengthBytes = new byte[2];
@@ -102,8 +116,8 @@ public final class StreamService extends Service {
         } finally {
             NativeBridge.NativeShutdown();
             CloseSocket();
-            stopSelf();
         }
+        return Connected;
     }
 
     private boolean ReadFully(InputStream Input, byte[] Buffer, int Length) throws Exception {
