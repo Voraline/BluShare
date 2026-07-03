@@ -4,6 +4,7 @@
 #include <opus.h>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <atomic>
 #include <vector>
 
@@ -34,6 +35,23 @@ static double ResamplePos = 0.0;
 static std::vector<int16_t> EncodeAccum;
 static std::vector<float> MonoScratch;
 static std::vector<uint8_t> EncodedPacket;
+
+static uint64_t KbpsBytesAccum = 0;
+static ULONGLONG KbpsWindowStartTick = 0;
+
+static void UpdateKbpsDisplay(uint32_t Bytes) {
+    KbpsBytesAccum += Bytes;
+    ULONGLONG Now = GetTickCount64();
+    if (KbpsWindowStartTick == 0) KbpsWindowStartTick = Now;
+    ULONGLONG Elapsed = Now - KbpsWindowStartTick;
+    if (Elapsed >= 1000) {
+        double Kbps = (KbpsBytesAccum * 8.0) / static_cast<double>(Elapsed);
+        printf("\r%.1f Kbps    ", Kbps);
+        fflush(stdout);
+        KbpsBytesAccum = 0;
+        KbpsWindowStartTick = Now;
+    }
+}
 
 static inline int16_t FloatToInt16(float Value) {
     if (Value > 1.0f) Value = 1.0f;
@@ -105,6 +123,7 @@ static bool EncodeAndSend() {
         if (!GlobalServer->Send(EncodedPacket.data(), static_cast<uint32_t>(Bytes))) {
             return false;
         }
+        UpdateKbpsDisplay(sizeof(PacketLength) + static_cast<uint32_t>(Bytes));
     }
     return true;
 }
