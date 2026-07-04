@@ -21,7 +21,7 @@ public final class StreamService extends Service {
 
     private static final String Tag = "StreamService";
     private static final UUID SppUuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
-    private static final int StreamMagic = 0x42415354;
+    private static final int StreamMagic = 0x1;
     private static final String ChannelId = "BluShareChannel";
 
     private Thread WorkerThread;
