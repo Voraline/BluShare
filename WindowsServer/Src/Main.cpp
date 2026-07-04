@@ -18,7 +18,7 @@ struct StreamHeader {
 };
 #pragma pack(pop)
 
-static constexpr uint32_t StreamMagic = 0x42415354;
+static constexpr uint32_t StreamMagic = 0x1;
 static constexpr uint8_t CodecOpus = 1;
 static constexpr uint32_t TargetSampleRate = 48000;
 static constexpr int32_t OpusFrameSamples = 960;
