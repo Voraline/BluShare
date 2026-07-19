@@ -22,6 +22,5 @@ private:
     SOCKET ListenSocket = INVALID_SOCKET;
     SOCKET ClientSocket = INVALID_SOCKET;
     GUID ServiceGuid{};
-    HANDLE ServiceLookupHandle = nullptr;
     bool WinsockInitialized = false;
 };

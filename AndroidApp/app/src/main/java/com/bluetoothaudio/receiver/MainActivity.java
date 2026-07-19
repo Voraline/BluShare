@@ -13,7 +13,6 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.TextView;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -41,12 +40,6 @@ public final class MainActivity extends Activity {
         Root.setOrientation(LinearLayout.VERTICAL);
         Root.setPadding(32, 64, 32, 32);
         Root.setBackgroundColor(ColorBackground);
-
-        TextView Title = new TextView(this);
-        Title.setText("");
-        Title.setTextSize(18);
-        Title.setTextColor(ColorTextPrimary);
-        Root.addView(Title);
 
         DeviceListLayout = new LinearLayout(this);
         DeviceListLayout.setOrientation(LinearLayout.VERTICAL);
