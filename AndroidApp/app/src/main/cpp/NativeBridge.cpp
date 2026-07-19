@@ -15,7 +15,7 @@ static int16_t DecodeScratch[MaxDecodeFrames * 2];
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Clazz,
-    jint SampleRate, jint Channels, jint BitsPerSample, jint Codec) {
+    jint SampleRate, jint Channels) {
 
     AAudioStreamBuilder* Builder = nullptr;
     if (AAudio_createStreamBuilder(&Builder) != AAUDIO_OK || Builder == nullptr) {
@@ -47,7 +47,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
-    AAudioStream_setBufferSizeInFrames(PlaybackStream, AAudioStream_getFramesPerBurst(PlaybackStream) * 2);
+    AAudioStream_setBufferSizeInFrames(PlaybackStream, AAudioStream_getFramesPerBurst(PlaybackStream) * 8);
 
     Result = AAudioStream_requestStart(PlaybackStream);
     if (Result != AAUDIO_OK) {

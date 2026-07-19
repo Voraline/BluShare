@@ -22,8 +22,6 @@ public final class StreamService extends Service {
     private static final String ChannelId = "BluShareChannel";
     private static final int SampleRate = 48000;
     private static final int Channels = 1;
-    private static final int BitsPerSample = 16;
-    private static final int Codec = 1;
 
     private Thread WorkerThread;
     private volatile boolean Running = false;
@@ -80,7 +78,7 @@ public final class StreamService extends Service {
             UpdateNotification("Connected");
             InputStream Input = Socket.getInputStream();
 
-            if (!NativeBridge.NativeInit(SampleRate, Channels, BitsPerSample, Codec)) {
+            if (!NativeBridge.NativeInit(SampleRate, Channels)) {
                 Log.e(Tag, "Failed to initialize native audio player");
                 return Connected;
             }

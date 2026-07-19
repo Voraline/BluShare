@@ -6,7 +6,7 @@ public final class NativeBridge {
         System.loadLibrary("BluShareNative");
     }
 
-    public static native boolean NativeInit(int SampleRate, int Channels, int BitsPerSample, int Codec);
+    public static native boolean NativeInit(int SampleRate, int Channels);
 
     public static native void NativeWrite(byte[] Data, int Length);
 

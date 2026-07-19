@@ -17,7 +17,6 @@ public:
             Items.push_back(std::move(Packet));
             while (Items.size() > MaxQueued) {
                 Items.pop_front();
-                ++DroppedCount;
             }
         }
         Cv.notify_one();
@@ -45,12 +44,6 @@ public:
         std::lock_guard<std::mutex> Lock(Mtx);
         Closed = false;
         Items.clear();
-        DroppedCount = 0;
-    }
-
-    uint64_t DroppedSinceReopen() const {
-        std::lock_guard<std::mutex> Lock(Mtx);
-        return DroppedCount;
     }
 
 private:
@@ -59,5 +52,4 @@ private:
     std::deque<std::vector<uint8_t>> Items;
     size_t MaxQueued;
     bool Closed = false;
-    uint64_t DroppedCount = 0;
 };
