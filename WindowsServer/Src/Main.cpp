@@ -144,6 +144,8 @@ static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate,
 int main() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+
     AudioCapture Capture;
     if (!Capture.Initialize()) return 1;
 
