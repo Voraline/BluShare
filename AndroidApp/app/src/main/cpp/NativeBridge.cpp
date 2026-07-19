@@ -47,7 +47,7 @@ Java_com_bluetoothaudio_receiver_NativeBridge_NativeInit(JNIEnv* Env, jclass Cla
         return JNI_FALSE;
     }
 
-    AAudioStream_setBufferSizeInFrames(PlaybackStream, AAudioStream_getFramesPerBurst(PlaybackStream) * 8);
+    AAudioStream_setBufferSizeInFrames(PlaybackStream, AAudioStream_getFramesPerBurst(PlaybackStream) * 2);
 
     Result = AAudioStream_requestStart(PlaybackStream);
     if (Result != AAUDIO_OK) {
