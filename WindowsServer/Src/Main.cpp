@@ -161,8 +161,6 @@ int main() {
     opus_encoder_ctl(Encoder, OPUS_SET_VBR(0));
     opus_encoder_ctl(Encoder, OPUS_SET_COMPLEXITY(10));
     opus_encoder_ctl(Encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
-    opus_encoder_ctl(Encoder, OPUS_SET_INBAND_FEC(1));
-    opus_encoder_ctl(Encoder, OPUS_SET_PACKET_LOSS_PERC(10));
 
     EncodedPacket.reserve(MaxOpusPacketBytes);
 
