@@ -1,11 +1,13 @@
 #include "BluetoothServer.h"
 #include "AudioCapture.h"
+#include "PacketQueue.h"
 #include <windows.h>
 #include <opus.h>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <atomic>
+#include <thread>
 #include <vector>
 
 #pragma pack(push, 1)
@@ -29,6 +31,7 @@ static std::atomic<bool> HeaderSent{ false };
 static std::atomic<bool> ClientAlive{ false };
 static BluetoothServer* GlobalServer = nullptr;
 static OpusEncoder* Encoder = nullptr;
+static PacketQueue SendQueue(32);
 
 static std::vector<float> ResampleInput;
 static double ResamplePos = 0.0;
@@ -110,22 +113,30 @@ static bool EncodeAndSend() {
 
         if (!HeaderSent.load(std::memory_order_relaxed)) {
             StreamHeader Header{ StreamMagic, TargetSampleRate, 1, 16, CodecOpus };
-            if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&Header), sizeof(Header))) {
-                return false;
-            }
+            std::vector<uint8_t> HeaderFrame(sizeof(Header));
+            memcpy(HeaderFrame.data(), &Header, sizeof(Header));
+            SendQueue.Push(std::move(HeaderFrame));
             HeaderSent.store(true, std::memory_order_relaxed);
         }
 
         uint16_t PacketLength = static_cast<uint16_t>(Bytes);
-        if (!GlobalServer->Send(reinterpret_cast<const uint8_t*>(&PacketLength), sizeof(PacketLength))) {
-            return false;
-        }
-        if (!GlobalServer->Send(EncodedPacket.data(), static_cast<uint32_t>(Bytes))) {
-            return false;
-        }
-        UpdateKbpsDisplay(sizeof(PacketLength) + static_cast<uint32_t>(Bytes));
+        std::vector<uint8_t> Frame(sizeof(PacketLength) + static_cast<size_t>(Bytes));
+        memcpy(Frame.data(), &PacketLength, sizeof(PacketLength));
+        memcpy(Frame.data() + sizeof(PacketLength), EncodedPacket.data(), static_cast<size_t>(Bytes));
+        SendQueue.Push(std::move(Frame));
+
+        UpdateKbpsDisplay(static_cast<uint32_t>(Frame.size()));
     }
     return true;
+}
+
+static void SenderThreadProc() {
+    std::vector<uint8_t> Frame;
+    while (SendQueue.Pop(Frame)) {
+        if (!GlobalServer->Send(Frame.data(), static_cast<uint32_t>(Frame.size()))) {
+            ClientAlive.store(false, std::memory_order_relaxed);
+        }
+    }
 }
 
 static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate, uint16_t Channels, uint16_t BitsPerSample) {
@@ -181,8 +192,14 @@ int main() {
         HeaderSent.store(false, std::memory_order_relaxed);
         ClientAlive.store(true, std::memory_order_relaxed);
         ResetStreamState();
+        SendQueue.Reopen();
+
+        std::thread SenderThread(SenderThreadProc);
 
         if (!Capture.Start(OnAudioData)) {
+            ClientAlive.store(false, std::memory_order_relaxed);
+            SendQueue.Close();
+            SenderThread.join();
             Server.DropClient();
             continue;
         }
@@ -192,6 +209,8 @@ int main() {
         }
 
         Capture.Stop();
+        SendQueue.Close();
+        SenderThread.join();
         Server.DropClient();
     }
 }
