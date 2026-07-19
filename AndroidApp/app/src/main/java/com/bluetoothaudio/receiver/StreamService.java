@@ -13,16 +13,17 @@ import android.os.IBinder;
 import android.util.Log;
 
 import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.UUID;
 
 public final class StreamService extends Service {
 
     private static final String Tag = "StreamService";
     private static final UUID SppUuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
-    private static final int StreamMagic = 0x1;
     private static final String ChannelId = "BluShareChannel";
+    private static final int SampleRate = 48000;
+    private static final int Channels = 1;
+    private static final int BitsPerSample = 16;
+    private static final int Codec = 1;
 
     private Thread WorkerThread;
     private volatile boolean Running = false;
@@ -78,21 +79,6 @@ public final class StreamService extends Service {
 
             UpdateNotification("Connected");
             InputStream Input = Socket.getInputStream();
-
-            byte[] HeaderBytes = new byte[13];
-            if (!ReadFully(Input, HeaderBytes, 13)) return Connected;
-
-            ByteBuffer HeaderBuffer = ByteBuffer.wrap(HeaderBytes).order(ByteOrder.LITTLE_ENDIAN);
-            int Magic = HeaderBuffer.getInt();
-            int SampleRate = HeaderBuffer.getInt();
-            short Channels = HeaderBuffer.getShort();
-            short BitsPerSample = HeaderBuffer.getShort();
-            int Codec = HeaderBuffer.get() & 0xFF;
-
-            if (Magic != StreamMagic) {
-                Log.e(Tag, "Invalid stream header");
-                return Connected;
-            }
 
             if (!NativeBridge.NativeInit(SampleRate, Channels, BitsPerSample, Codec)) {
                 Log.e(Tag, "Failed to initialize native audio player");

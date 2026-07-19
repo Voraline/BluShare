@@ -12,7 +12,6 @@ AudioCapture::~AudioCapture() {
     if (Format) CoTaskMemFree(Format);
     if (CaptureClient) CaptureClient->Release();
     if (Client) Client->Release();
-    if (EndpointVolume) EndpointVolume->Release();
     if (Device) Device->Release();
     if (DeviceEnumerator) DeviceEnumerator->Release();
     if (CaptureEvent) CloseHandle(CaptureEvent);
@@ -28,8 +27,6 @@ bool AudioCapture::Initialize() {
 
     Result = Device->Activate(IID_IAudioClient_Local, CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&Client));
     if (FAILED(Result)) return false;
-
-    Device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&EndpointVolume));
 
     Result = Client->GetMixFormat(&Format);
     if (FAILED(Result)) return false;
@@ -56,11 +53,6 @@ bool AudioCapture::Start(DataCallback Callback) {
     OnData = std::move(Callback);
     if (FAILED(Client->Start())) return false;
 
-    if (MuteWhilePlaying && EndpointVolume) {
-        EndpointVolume->GetMute(&WasMuted);
-        EndpointVolume->SetMute(TRUE, nullptr);
-    }
-
     Running = true;
     CaptureThread = CreateThread(nullptr, 0, ThreadProc, this, 0, nullptr);
     return CaptureThread != nullptr;
@@ -76,10 +68,6 @@ void AudioCapture::Stop() {
         CaptureThread = nullptr;
     }
     if (Client) Client->Stop();
-
-    if (MuteWhilePlaying && EndpointVolume) {
-        EndpointVolume->SetMute(WasMuted, nullptr);
-    }
 }
 
 DWORD WINAPI AudioCapture::ThreadProc(LPVOID Param) {

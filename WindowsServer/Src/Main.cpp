@@ -10,24 +10,11 @@
 #include <thread>
 #include <vector>
 
-#pragma pack(push, 1)
-struct StreamHeader {
-    uint32_t Magic;
-    uint32_t SampleRate;
-    uint16_t Channels;
-    uint16_t BitsPerSample;
-    uint8_t Codec;
-};
-#pragma pack(pop)
-
-static constexpr uint32_t StreamMagic = 0x1;
-static constexpr uint8_t CodecOpus = 1;
 static constexpr uint32_t TargetSampleRate = 48000;
 static constexpr int32_t OpusFrameSamples = 960;
 static constexpr int32_t OpusBitrate = 128000;
 static constexpr size_t MaxOpusPacketBytes = 1500;
 
-static std::atomic<bool> HeaderSent{ false };
 static std::atomic<bool> ClientAlive{ false };
 static BluetoothServer* GlobalServer = nullptr;
 static OpusEncoder* Encoder = nullptr;
@@ -111,14 +98,6 @@ static bool EncodeAndSend() {
 
         if (Bytes < 0) return false;
 
-        if (!HeaderSent.load(std::memory_order_relaxed)) {
-            StreamHeader Header{ StreamMagic, TargetSampleRate, 1, 16, CodecOpus };
-            std::vector<uint8_t> HeaderFrame(sizeof(Header));
-            memcpy(HeaderFrame.data(), &Header, sizeof(Header));
-            SendQueue.Push(std::move(HeaderFrame));
-            HeaderSent.store(true, std::memory_order_relaxed);
-        }
-
         uint16_t PacketLength = static_cast<uint16_t>(Bytes);
         std::vector<uint8_t> Frame(sizeof(PacketLength) + static_cast<size_t>(Bytes));
         memcpy(Frame.data(), &PacketLength, sizeof(PacketLength));
@@ -158,7 +137,6 @@ static void OnAudioData(const uint8_t* Data, uint32_t Size, uint32_t SampleRate,
 
     if (!EncodeAndSend()) {
         ClientAlive.store(false, std::memory_order_relaxed);
-        HeaderSent.store(false, std::memory_order_relaxed);
         ResetStreamState();
     }
 }
@@ -189,7 +167,6 @@ int main() {
     while (true) {
         if (!Server.WaitForClient()) continue;
 
-        HeaderSent.store(false, std::memory_order_relaxed);
         ClientAlive.store(true, std::memory_order_relaxed);
         ResetStreamState();
         SendQueue.Reopen();
