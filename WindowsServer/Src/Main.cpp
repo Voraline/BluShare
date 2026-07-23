@@ -12,7 +12,7 @@
 
 static constexpr uint32_t TargetSampleRate = 48000;
 static constexpr int32_t OpusFrameSamples = 960;
-static constexpr int32_t OpusBitrate = 128000;
+static constexpr int32_t OpusBitrate = 96000;
 static constexpr size_t MaxOpusPacketBytes = 1500;
 
 static std::atomic<bool> ClientAlive{ false };
