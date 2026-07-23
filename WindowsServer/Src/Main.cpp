@@ -6,7 +6,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <algorithm>
 #include <atomic>
+#include <deque>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -20,26 +23,31 @@ static BluetoothServer* GlobalServer = nullptr;
 static OpusEncoder* Encoder = nullptr;
 static PacketQueue SendQueue(32);
 
-static std::vector<float> ResampleInput;
+static std::deque<float> ResampleInput;
 static double ResamplePos = 0.0;
-static std::vector<int16_t> EncodeAccum;
+static std::deque<int16_t> EncodeAccum;
+static int16_t EncodeScratch[OpusFrameSamples];
 static std::vector<float> MonoScratch;
 static std::vector<uint8_t> EncodedPacket;
 
-static uint64_t KbpsBytesAccum = 0;
-static ULONGLONG KbpsWindowStartTick = 0;
+static std::mutex FramePoolMtx;
+static std::vector<std::vector<uint8_t>> FramePool;
 
-static void UpdateKbpsDisplay(uint32_t Bytes) {
-    KbpsBytesAccum += Bytes;
-    ULONGLONG Now = GetTickCount64();
-    if (KbpsWindowStartTick == 0) KbpsWindowStartTick = Now;
-    ULONGLONG Elapsed = Now - KbpsWindowStartTick;
-    if (Elapsed >= 1000) {
-        double Kbps = (KbpsBytesAccum * 8.0) / static_cast<double>(Elapsed);
-        printf("\r%.1f", Kbps);
-        fflush(stdout);
-        KbpsBytesAccum = 0;
-        KbpsWindowStartTick = Now;
+static std::vector<uint8_t> AcquireFrameBuffer() {
+    std::lock_guard<std::mutex> Lock(FramePoolMtx);
+    if (!FramePool.empty()) {
+        std::vector<uint8_t> Buf = std::move(FramePool.back());
+        FramePool.pop_back();
+        return Buf;
+    }
+    return std::vector<uint8_t>();
+}
+
+static void ReleaseFrameBuffer(std::vector<uint8_t> Buf) {
+    Buf.clear();
+    std::lock_guard<std::mutex> Lock(FramePoolMtx);
+    if (FramePool.size() < 32) {
+        FramePool.push_back(std::move(Buf));
     }
 }
 
@@ -90,21 +98,21 @@ static void ResampleAppend(const float* Mono, uint32_t FrameCount, uint32_t Sour
 
 static bool EncodeAndSend() {
     while (EncodeAccum.size() >= static_cast<size_t>(OpusFrameSamples)) {
-        EncodedPacket.resize(MaxOpusPacketBytes);
-        int32_t Bytes = opus_encode(Encoder, EncodeAccum.data(), OpusFrameSamples,
-            EncodedPacket.data(), static_cast<int32_t>(EncodedPacket.size()));
-
+        std::copy(EncodeAccum.begin(), EncodeAccum.begin() + OpusFrameSamples, EncodeScratch);
         EncodeAccum.erase(EncodeAccum.begin(), EncodeAccum.begin() + OpusFrameSamples);
+
+        EncodedPacket.resize(MaxOpusPacketBytes);
+        int32_t Bytes = opus_encode(Encoder, EncodeScratch, OpusFrameSamples,
+            EncodedPacket.data(), static_cast<int32_t>(EncodedPacket.size()));
 
         if (Bytes < 0) return false;
 
         uint16_t PacketLength = static_cast<uint16_t>(Bytes);
-        std::vector<uint8_t> Frame(sizeof(PacketLength) + static_cast<size_t>(Bytes));
+        std::vector<uint8_t> Frame = AcquireFrameBuffer();
+        Frame.resize(sizeof(PacketLength) + static_cast<size_t>(Bytes));
         memcpy(Frame.data(), &PacketLength, sizeof(PacketLength));
         memcpy(Frame.data() + sizeof(PacketLength), EncodedPacket.data(), static_cast<size_t>(Bytes));
         SendQueue.Push(std::move(Frame));
-
-        UpdateKbpsDisplay(static_cast<uint32_t>(Frame.size()));
     }
     return true;
 }
@@ -115,6 +123,7 @@ static void SenderThreadProc() {
         if (!GlobalServer->Send(Frame.data(), static_cast<uint32_t>(Frame.size()))) {
             ClientAlive.store(false, std::memory_order_relaxed);
         }
+        ReleaseFrameBuffer(std::move(Frame));
     }
 }
 
