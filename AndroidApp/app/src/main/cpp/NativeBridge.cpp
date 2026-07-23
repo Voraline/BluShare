@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <atomic>
 
-static constexpr int32_t MaxDecodeFrames = 5760;
+static constexpr int32_t MaxDecodeFrames = 960;
 
 static AAudioStream* PlaybackStream = nullptr;
 static OpusDecoder* Decoder = nullptr;
